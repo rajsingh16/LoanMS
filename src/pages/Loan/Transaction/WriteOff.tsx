@@ -1,118 +1,36 @@
-import React, { useState } from 'react';
-import { 
-  Upload, 
-  Download, 
-  Calendar, 
-  CheckCircle, 
-  XCircle, 
-  Filter, 
-  ChevronDown,
-  DollarSign
+// ─── WriteOffPage.tsx ──────────────────────────────────────────────────────
+import React, { useState, useEffect, useRef } from 'react';
+import { DataTable } from '../../../components/Common/DataTable';
+import { PermissionGuard } from '../../../components/Common/PermissionGuard';
+import { writeOffService, WriteOffRecord, WriteOffFilterOptions } from '../../../services/transactionService/writeOffService';
+import {
+  Upload, Calendar, CheckCircle, Filter, ChevronDown, DollarSign, AlertCircle,
 } from 'lucide-react';
 
-interface WriteOffRecord {
-  id: string;
-  loanCode: string;
-  pos: number;
-  iarr: number;
-}
-
-interface FilterOptions {
-  dateFrom: string;
-  dateTo: string;
-}
-
-const FilterDropdown: React.FC<{
-  onFilter: (filters: FilterOptions) => void;
-}> = ({ onFilter }) => {
+const FilterDropdown: React.FC<{ onFilter: (f: WriteOffFilterOptions) => void }> = ({ onFilter }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [filters, setFilters] = useState<FilterOptions>({
-    dateFrom: '',
-    dateTo: ''
-  });
-
-  const handleFilterChange = (key: keyof FilterOptions, value: string) => {
-    const newFilters = { ...filters, [key]: value };
-    setFilters(newFilters);
-  };
-
-  const applyFilters = () => {
-    onFilter(filters);
-    setIsOpen(false);
-  };
-
-  const clearFilters = () => {
-    setFilters({
-      dateFrom: '',
-      dateTo: ''
-    });
-    onFilter({
-      dateFrom: '',
-      dateTo: ''
-    });
-  };
+  const [filters, setFilters] = useState<WriteOffFilterOptions>({ dateFrom: '', dateTo: '' });
+  const change = (k: keyof WriteOffFilterOptions, v: string) => setFilters(prev => ({ ...prev, [k]: v }));
+  const apply = () => { onFilter(filters); setIsOpen(false); };
+  const clear = () => { const e = { dateFrom: '', dateTo: '' }; setFilters(e); onFilter(e); };
 
   return (
     <div className="relative">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center space-x-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
-      >
-        <Filter className="w-4 h-4" />
-        <span>Search Filter</span>
-        <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+      <button onClick={() => setIsOpen(!isOpen)} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white">
+        <Filter className="w-4 h-4" /><span>Search Filter</span><ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
-
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-96 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-          <div className="p-4 space-y-4">
-            <div className="flex items-center space-x-2 mb-4">
-              <Calendar className="w-5 h-5 text-gray-400" />
-              <h3 className="text-lg font-semibold text-gray-900">Date Range</h3>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Date From <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={filters.dateFrom}
-                  onChange={(e) => handleFilterChange('dateFrom', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Date To <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={filters.dateTo}
-                  onChange={(e) => handleFilterChange('dateTo', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-between pt-4 border-t border-gray-200">
-              <button
-                onClick={clearFilters}
-                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors duration-200"
-              >
-                Clear All
-              </button>
-              <button
-                onClick={applyFilters}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
-              >
-                Apply Filters
-              </button>
-            </div>
+        <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-10 p-4 space-y-4">
+          <div className="flex items-center space-x-2"><Calendar className="w-5 h-5 text-gray-400" /><h3 className="text-lg font-semibold text-gray-900 dark:text-white">Date Range</h3></div>
+          <div className="grid grid-cols-2 gap-4">
+            {[{ key: 'dateFrom' as const, label: 'Date From', required: true }, { key: 'dateTo' as const, label: 'Date To', required: true }].map(({ key, label, required }) => (
+              <div key={key}><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label} {required && <span className="text-red-500">*</span>}</label>
+                <input type="date" value={filters[key]} onChange={e => change(key, e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white" /></div>
+            ))}
+          </div>
+          <div className="flex justify-between pt-4 border-t border-gray-200 dark:border-gray-600">
+            <button onClick={clear} className="px-4 py-2 text-gray-600 dark:text-gray-400">Clear All</button>
+            <button onClick={apply} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Apply Filters</button>
           </div>
         </div>
       )}
@@ -121,220 +39,78 @@ const FilterDropdown: React.FC<{
 };
 
 export const WriteOffPage: React.FC = () => {
-  const [records, setRecords] = useState<WriteOffRecord[]>([
-    {
-      id: '1',
-      loanCode: 'LN001',
-      pos: 45000,
-      iarr: 2000
-    },
-    {
-      id: '2',
-      loanCode: 'LN002',
-      pos: 70000,
-      iarr: 3500
-    },
-    {
-      id: '3',
-      loanCode: 'LN003',
-      pos: 25000,
-      iarr: 1200
-    }
-  ]);
-  
-  const [filteredRecords, setFilteredRecords] = useState<WriteOffRecord[]>(records);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>('');
-  const [success, setSuccess] = useState<string>('');
+  const [records, setRecords] = useState<WriteOffRecord[]>([]);
+  const [filteredRecords, setFilteredRecords] = useState<WriteOffRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFilter = (filters: FilterOptions) => {
-    // In a real application, this would filter based on the provided date range
-    // For now, we'll just return all records
-    setFilteredRecords(records);
+  useEffect(() => { loadRecords(); }, []);
+
+  const loadRecords = async (filters?: Partial<WriteOffFilterOptions>) => {
+    try {
+      setLoading(true);
+      const data = await writeOffService.getAllRecords(filters);
+      setRecords(data); setFilteredRecords(data);
+    } catch { setError('Failed to load write-off data'); }
+    finally { setLoading(false); }
   };
 
-  const handleUpload = () => {
-    alert('Upload functionality will be implemented');
+  const handleFilter = async (filters: WriteOffFilterOptions) => {
+    await loadRecords(filters);
   };
 
-  const handleWriteOff = () => {
-    alert('Write Off functionality will be implemented');
+  const handleUpload = () => uploadInputRef.current?.click();
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    try {
+      const result = await writeOffService.uploadWriteOff(file);
+      setSuccess(result.message || 'File uploaded successfully!'); await loadRecords(); setTimeout(() => setSuccess(''), 3000);
+    } catch { setError('Upload failed'); }
+    e.target.value = '';
   };
+
+  const handleWriteOff = async () => {
+    if (!window.confirm('Are you sure you want to process write-offs for all displayed records?')) return;
+    try {
+      setIsProcessing(true);
+      const result = await writeOffService.processWriteOff(filteredRecords.map(r => r.loanCode));
+      setSuccess(result.message || `${result.processed} loans written off successfully!`); await loadRecords(); setTimeout(() => setSuccess(''), 3000);
+    } catch { setError('Write-off processing failed'); }
+    finally { setIsProcessing(false); }
+  };
+
+  const totalPos = records.reduce((s, r) => s + r.pos, 0);
+  const totalIarr = records.reduce((s, r) => s + r.iarr, 0);
 
   const columns = [
-    {
-      key: 'loanCode',
-      label: 'Loan Code',
-      sortable: true,
-      render: (value: string) => (
-        <span className="font-mono font-medium">{value}</span>
-      )
-    },
-    {
-      key: 'pos',
-      label: 'POS',
-      sortable: true,
-      render: (value: number) => (
-        <div className="flex items-center space-x-1">
-          <DollarSign className="w-4 h-4 text-gray-400" />
-          <span className="font-medium">₹{value.toLocaleString()}</span>
-        </div>
-      )
-    },
-    {
-      key: 'iarr',
-      label: 'IARR',
-      sortable: true,
-      render: (value: number) => (
-        <div className="flex items-center space-x-1">
-          <DollarSign className="w-4 h-4 text-gray-400" />
-          <span>₹{value.toLocaleString()}</span>
-        </div>
-      )
-    }
+    { key: 'loanCode', label: 'Loan Code', sortable: true, render: (v: string) => <span className="font-mono font-medium">{v}</span> },
+    { key: 'pos', label: 'POS', sortable: true, render: (v: number) => <div className="flex items-center space-x-1"><DollarSign className="w-4 h-4 text-gray-400" /><span className="font-medium">₹{v.toLocaleString()}</span></div> },
+    { key: 'iarr', label: 'IARR', sortable: true, render: (v: number) => <div className="flex items-center space-x-1"><DollarSign className="w-4 h-4 text-gray-400" /><span>₹{v.toLocaleString()}</span></div> },
   ];
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-64">
-        <div className="flex items-center space-x-3">
-          <div className="w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <span className="text-gray-600">Loading write-off data...</span>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Write Off</h1>
-        <p className="text-gray-600 mt-1">Manage loan write-offs</p>
-      </div>
-
-      {/* Success/Error Messages */}
-      {success && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center space-x-2">
-          <CheckCircle className="w-5 h-5 flex-shrink-0" />
-          <span>{success}</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center space-x-2">
-          <XCircle className="w-5 h-5 flex-shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* Summary Cards */}
+      <input ref={uploadInputRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={handleFileChange} />
+      <div><h1 className="text-2xl font-bold text-gray-900 dark:text-white">Write Off</h1><p className="text-gray-600 dark:text-gray-400 mt-1">Manage loan write-offs</p></div>
+      {success && <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 px-4 py-3 rounded-lg flex items-center space-x-2"><CheckCircle className="w-5 h-5 flex-shrink-0" /><span>{success}</span></div>}
+      {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg flex items-center space-x-2"><AlertCircle className="w-5 h-5 flex-shrink-0" /><span>{error}</span></div>}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <DollarSign className="w-5 h-5 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total POS</p>
-              <p className="text-xl font-bold text-gray-900">
-                ₹{records.reduce((sum, record) => sum + record.pos, 0).toLocaleString()}
-              </p>
-            </div>
+        {[{ label: 'Total POS', value: `₹${totalPos.toLocaleString()}`, color: 'text-blue-600', bg: 'bg-blue-100 dark:bg-blue-900/30' }, { label: 'Total IARR', value: `₹${totalIarr.toLocaleString()}`, color: 'text-yellow-600', bg: 'bg-yellow-100 dark:bg-yellow-900/30' }, { label: 'Total Write-Off', value: `₹${(totalPos + totalIarr).toLocaleString()}`, color: 'text-red-600', bg: 'bg-red-100 dark:bg-red-900/30' }].map(({ label, value, color, bg }) => (
+          <div key={label} className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
+            <div className="flex items-center space-x-3"><div className={`p-2 ${bg} rounded-lg`}><DollarSign className={`w-5 h-5 ${color}`} /></div><div><p className="text-sm font-medium text-gray-600 dark:text-gray-400">{label}</p><p className="text-xl font-bold text-gray-900 dark:text-white">{value}</p></div></div>
           </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-yellow-100 rounded-lg">
-              <DollarSign className="w-5 h-5 text-yellow-600" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total IARR</p>
-              <p className="text-xl font-bold text-gray-900">
-                ₹{records.reduce((sum, record) => sum + record.iarr, 0).toLocaleString()}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-red-100 rounded-lg">
-              <DollarSign className="w-5 h-5 text-red-600" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total Write-Off</p>
-              <p className="text-xl font-bold text-gray-900">
-                ₹{records.reduce((sum, record) => sum + record.pos + record.iarr, 0).toLocaleString()}
-              </p>
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
-
-      {/* Main Content */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Write-Off Management</h2>
-              <p className="text-sm text-gray-500 mt-1">
-                {filteredRecords.length} records found
-              </p>
-            </div>
-            
-            <div className="flex items-center space-x-3">
-              <FilterDropdown onFilter={handleFilter} />
-              
-              <button
-                onClick={handleUpload}
-                className="flex items-center space-x-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
-              >
-                <Upload className="w-4 h-4" />
-                <span>Upload</span>
-              </button>
-              
-              <button
-                onClick={handleWriteOff}
-                className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors duration-200"
-              >
-                <span>Write Off</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                {columns.map((column) => (
-                  <th
-                    key={column.key}
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap"
-                  >
-                    {column.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredRecords.map((record, index) => (
-                <tr
-                  key={record.id}
-                  className="hover:bg-gray-50 transition-colors duration-200"
-                >
-                  {columns.map((column) => (
-                    <td key={column.key} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {column.render ? column.render(record[column.key as keyof WriteOffRecord], record) : record[column.key as keyof WriteOffRecord]}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable columns={columns} data={filteredRecords} title="Write-Off Management" loading={loading}
+        filterComponent={<div className="flex items-center space-x-3">
+          <FilterDropdown onFilter={handleFilter} />
+          <PermissionGuard module="loan" permission="write"><button onClick={handleUpload} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white"><Upload className="w-4 h-4" /><span>Upload</span></button></PermissionGuard>
+          <PermissionGuard module="loan" permission="write"><button onClick={handleWriteOff} disabled={isProcessing || filteredRecords.length === 0} className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"><span>{isProcessing ? 'Processing...' : 'Write Off'}</span></button></PermissionGuard>
+        </div>} />
     </div>
   );
 };

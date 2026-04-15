@@ -172,6 +172,49 @@ function profileWithBranch(row) {
   return { ...profile, branches };
 }
 
+let resolvedCenterTable = null;
+
+function quoteIdent(identifier) {
+  return `"${String(identifier).replace(/"/g, '""')}"`;
+}
+
+async function getCenterTableName() {
+  if (resolvedCenterTable) {
+    return resolvedCenterTable;
+  }
+
+  // First prefer expected names.
+  const preferred = await pool.query(
+    `SELECT tablename
+     FROM pg_catalog.pg_tables
+     WHERE schemaname = 'public' AND tablename IN ('centers', 'center')
+     ORDER BY CASE tablename WHEN 'centers' THEN 0 WHEN 'center' THEN 1 ELSE 2 END
+     LIMIT 1`
+  );
+  if (preferred.rows[0]?.tablename) {
+    resolvedCenterTable = preferred.rows[0].tablename;
+    return resolvedCenterTable;
+  }
+
+  // Fallback: detect by required columns.
+  const fallback = await pool.query(
+    `SELECT table_name
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND column_name IN ('center_code', 'center_name', 'branch_id')
+     GROUP BY table_name
+     HAVING COUNT(DISTINCT column_name) = 3
+     ORDER BY table_name
+     LIMIT 1`
+  );
+  if (fallback.rows[0]?.table_name) {
+    resolvedCenterTable = fallback.rows[0].table_name;
+    return resolvedCenterTable;
+  }
+
+  throw new Error('Center table not found in database schema');
+}
+
 // --- Users / profiles ---
 app.get('/api/users/:id/profile', authMiddleware, async (req, res) => {
   try {
@@ -276,12 +319,13 @@ app.get('/api/users/by-role/:role', authMiddleware, async (req, res) => {
 // --- Centers ---
 app.get('/api/centers', authMiddleware, async (_req, res) => {
   try {
+    const centerTable = quoteIdent(await getCenterTableName());
     const { rows } = await pool.query(`
       SELECT c.*,
         b.id AS b_id, b.branch_name AS b_branch_name, b.branch_code AS b_branch_code,
         u1.id AS a_id, u1.first_name AS a_fn, u1.last_name AS a_ln,
         u2.id AS c_id, u2.first_name AS c_fn, u2.last_name AS c_ln
-      FROM centers c
+      FROM ${centerTable} c
       LEFT JOIN branches b ON c.branch_id = b.id
       LEFT JOIN user_profiles u1 ON c.assigned_to = u1.id
       LEFT JOIN user_profiles u2 ON c.created_by = u2.id
@@ -319,12 +363,13 @@ function stripJoinAliases(r) {
 app.post('/api/centers', authMiddleware, async (req, res) => {
   const b = req.body;
   try {
+    const centerTable = quoteIdent(await getCenterTableName());
     const br = await pool.query(`SELECT branch_code FROM branches WHERE id = $1`, [b.branch_id]);
     const branchCode = br.rows[0]?.branch_code || 'CTR';
     const centerCode = `${branchCode}${String(Date.now()).slice(-4)}`;
 
     const { rows } = await pool.query(
-      `INSERT INTO centers (
+      `INSERT INTO ${centerTable} (
         center_code, center_name, branch_id, village, assigned_to, center_day, center_time,
         contact_person_name, contact_person_number, meeting_place, address1, address2, landmark,
         pincode, city, latitude, longitude, status, blacklisted, bc_center_id, parent_center_id, created_by
@@ -362,7 +407,7 @@ app.post('/api/centers', authMiddleware, async (req, res) => {
       SELECT c.*,
         b.id AS b_id, b.branch_name AS b_branch_name, b.branch_code AS b_branch_code,
         u1.id AS a_id, u1.first_name AS a_fn, u1.last_name AS a_ln
-      FROM centers c
+      FROM ${centerTable} c
       LEFT JOIN branches b ON c.branch_id = b.id
       LEFT JOIN user_profiles u1 ON c.assigned_to = u1.id
       WHERE c.id = $1
@@ -422,8 +467,9 @@ app.patch('/api/centers/:id', authMiddleware, async (req, res) => {
   }
   vals.push(req.params.id);
   try {
+    const centerTable = quoteIdent(await getCenterTableName());
     await pool.query(
-      `UPDATE centers SET ${sets.join(', ')}, updated_at = now() WHERE id = $${i}`,
+      `UPDATE ${centerTable} SET ${sets.join(', ')}, updated_at = now() WHERE id = $${i}`,
       vals
     );
     const { rows } = await pool.query(
@@ -432,7 +478,7 @@ app.patch('/api/centers/:id', authMiddleware, async (req, res) => {
         b.id AS b_id, b.branch_name AS b_branch_name, b.branch_code AS b_branch_code,
         u1.id AS a_id, u1.first_name AS a_fn, u1.last_name AS a_ln,
         u2.id AS c_id, u2.first_name AS c_fn, u2.last_name AS c_ln
-      FROM centers c
+      FROM ${centerTable} c
       LEFT JOIN branches b ON c.branch_id = b.id
       LEFT JOIN user_profiles u1 ON c.assigned_to = u1.id
       LEFT JOIN user_profiles u2 ON c.created_by = u2.id
@@ -461,7 +507,8 @@ app.patch('/api/centers/:id', authMiddleware, async (req, res) => {
 
 app.delete('/api/centers/:id', authMiddleware, async (req, res) => {
   try {
-    await pool.query(`DELETE FROM centers WHERE id = $1`, [req.params.id]);
+    const centerTable = quoteIdent(await getCenterTableName());
+    await pool.query(`DELETE FROM ${centerTable} WHERE id = $1`, [req.params.id]);
     return res.json({ error: null });
   } catch (e) {
     console.error(e);

@@ -1,216 +1,41 @@
-import React, { useState } from 'react';
-import { 
-  Search, 
-  Download, 
-  Upload, 
-  Play, 
-  Calendar, 
-  Building, 
-  CheckCircle, 
-  XCircle, 
-  Filter, 
-  ChevronDown,
-  CreditCard,
-  User,
-  DollarSign,
-  Mail,
-  MapPin
+// ─── NEFTDisbursementPage.tsx ──────────────────────────────────────────────
+import React, { useState, useEffect, useRef } from 'react';
+import { DataTable } from '../../../components/Common/DataTable';
+import { PermissionGuard } from '../../../components/Common/PermissionGuard';
+import { neftDisbursementService, NEFTDisbursementRecord, NEFTUploaderRecord, NEFTDownloaderFilterOptions } from '../../../services/transactionService/neftDisbursementService';
+import {
+  Download, Upload, Play, Calendar, CheckCircle, XCircle,
+  Filter, ChevronDown, CreditCard, User, DollarSign, Mail, MapPin, AlertCircle, Search,
 } from 'lucide-react';
 
-interface NEFTDisbursementRecord {
-  id: string;
-  transactionType: string;
-  beneficiaryCode: string;
-  beneficiaryAccountNumber: string;
-  instrumentAmount: number;
-  beneficiaryName: string;
-  draweeLocation: string;
-  printLocation: string;
-  beneficiaryAddress1: string;
-  beneficiaryAddress2: string;
-  beneficiaryAddress3: string;
-  beneficiaryAddress4: string;
-  beneficiaryAddress5: string;
-  instructionReferenceNumber: string;
-  customerReferenceNumber: string;
-  paymentDetails1: string;
-  paymentDetails2: string;
-  paymentDetails3: string;
-  paymentDetails4: string;
-  paymentDetails5: string;
-  paymentDetails6: string;
-  paymentDetails7: string;
-  chequeNumber: string;
-  chequeTransactionDate: string;
-  micrNumber: string;
-  ifscCode: string;
-  beneficiaryBankName: string;
-  beneficiaryBankBranchName: string;
-  beneficiaryEmailId: string;
-}
-
-interface NEFTUploaderRecord {
-  id: string;
-  transactionId: string;
-  loanCode: string;
-  loanAmount: number;
-  settleDate: string;
-  settledStatus: string;
-  isAmortGenerated: boolean;
-  processStatus: string;
-  processMessage: string;
-}
-
-interface DownloaderFilterOptions {
-  disbursementDateFrom: string;
-  disbursementDateTo: string;
-  bcPartner: string;
-  zone?: string;
-  division?: string;
-  branch?: string;
-}
-
-const DownloaderFilterDropdown: React.FC<{
-  onFilter: (filters: DownloaderFilterOptions) => void;
-}> = ({ onFilter }) => {
+const DownloaderFilterDropdown: React.FC<{ onFilter: (f: NEFTDownloaderFilterOptions) => void }> = ({ onFilter }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [filters, setFilters] = useState<DownloaderFilterOptions>({
-    disbursementDateFrom: '',
-    disbursementDateTo: '',
-    bcPartner: ''
-  });
-
-  const handleFilterChange = (key: keyof DownloaderFilterOptions, value: string) => {
-    const newFilters = { ...filters, [key]: value };
-    setFilters(newFilters);
-  };
-
-  const applyFilters = () => {
-    onFilter(filters);
-    setIsOpen(false);
-  };
-
-  const clearFilters = () => {
-    setFilters({
-      disbursementDateFrom: '',
-      disbursementDateTo: '',
-      bcPartner: ''
-    });
-    onFilter({
-      disbursementDateFrom: '',
-      disbursementDateTo: '',
-      bcPartner: ''
-    });
-  };
+  const [filters, setFilters] = useState<NEFTDownloaderFilterOptions>({ disbursementDateFrom: '', disbursementDateTo: '', bcPartner: '' });
+  const change = (k: keyof NEFTDownloaderFilterOptions, v: string) => setFilters(prev => ({ ...prev, [k]: v }));
+  const apply = () => { onFilter(filters); setIsOpen(false); };
+  const clear = () => { const e = { disbursementDateFrom: '', disbursementDateTo: '', bcPartner: '' }; setFilters(e); onFilter(e); };
 
   return (
     <div className="relative">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center space-x-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
-      >
-        <Filter className="w-4 h-4" />
-        <span>Search Filter</span>
-        <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+      <button onClick={() => setIsOpen(!isOpen)} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white">
+        <Filter className="w-4 h-4" /><span>Search Filter</span><ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
-
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-96 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-          <div className="p-4 space-y-4">
-            <div className="flex items-center space-x-2 mb-4">
-              <Search className="w-5 h-5 text-gray-400" />
-              <h3 className="text-lg font-semibold text-gray-900">Search Filters</h3>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Disbursement Date From <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={filters.disbursementDateFrom}
-                  onChange={(e) => handleFilterChange('disbursementDateFrom', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Disbursement Date To <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={filters.disbursementDateTo}
-                  onChange={(e) => handleFilterChange('disbursementDateTo', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  BC Partner <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={filters.bcPartner}
-                  onChange={(e) => handleFilterChange('bcPartner', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter BC partner"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Zone</label>
-                <input
-                  type="text"
-                  value={filters.zone || ''}
-                  onChange={(e) => handleFilterChange('zone', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter zone"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Division</label>
-                <input
-                  type="text"
-                  value={filters.division || ''}
-                  onChange={(e) => handleFilterChange('division', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter division"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Branch</label>
-                <input
-                  type="text"
-                  value={filters.branch || ''}
-                  onChange={(e) => handleFilterChange('branch', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter branch"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-between pt-4 border-t border-gray-200">
-              <button
-                onClick={clearFilters}
-                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors duration-200"
-              >
-                Clear All
-              </button>
-              <button
-                onClick={applyFilters}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
-              >
-                Apply Filters
-              </button>
-            </div>
+        <div className="absolute right-0 mt-2 w-96 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-10 p-4 space-y-4">
+          <div className="flex items-center space-x-2"><Search className="w-5 h-5 text-gray-400" /><h3 className="text-lg font-semibold text-gray-900 dark:text-white">Search Filters</h3></div>
+          <div className="grid grid-cols-2 gap-4">
+            {[{ key: 'disbursementDateFrom' as const, label: 'Disbursement Date From', required: true, type: 'date' }, { key: 'disbursementDateTo' as const, label: 'Disbursement Date To', required: true, type: 'date' }].map(({ key, label, required, type }) => (
+              <div key={key}><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label} {required && <span className="text-red-500">*</span>}</label>
+                <input type={type} value={filters[key] || ''} onChange={e => change(key, e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white" /></div>
+            ))}
+          </div>
+          {[{ key: 'bcPartner' as const, label: 'BC Partner', required: true }, { key: 'zone' as const, label: 'Zone' }, { key: 'division' as const, label: 'Division' }, { key: 'branch' as const, label: 'Branch' }].map(({ key, label, required }) => (
+            <div key={key}><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label} {required && <span className="text-red-500">*</span>}</label>
+              <input type="text" value={(filters[key] as string) || ''} onChange={e => change(key, e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white" placeholder={`Enter ${label.toLowerCase()}`} /></div>
+          ))}
+          <div className="flex justify-between pt-4 border-t border-gray-200 dark:border-gray-600">
+            <button onClick={clear} className="px-4 py-2 text-gray-600 dark:text-gray-400">Clear All</button>
+            <button onClick={apply} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Apply Filters</button>
           </div>
         </div>
       )}
@@ -220,549 +45,138 @@ const DownloaderFilterDropdown: React.FC<{
 
 export const NEFTDisbursementPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'downloader' | 'uploader'>('downloader');
-  const [downloaderRecords, setDownloaderRecords] = useState<NEFTDisbursementRecord[]>([
-    {
-      id: '1',
-      transactionType: 'NEFT',
-      beneficiaryCode: 'BEN001',
-      beneficiaryAccountNumber: '1234567890',
-      instrumentAmount: 50000,
-      beneficiaryName: 'Priya Sharma',
-      draweeLocation: 'Delhi',
-      printLocation: 'Delhi',
-      beneficiaryAddress1: '123 Main St',
-      beneficiaryAddress2: 'Anand Nagar',
-      beneficiaryAddress3: 'Central Delhi',
-      beneficiaryAddress4: 'Delhi',
-      beneficiaryAddress5: '110001',
-      instructionReferenceNumber: 'INS001',
-      customerReferenceNumber: 'CUS001',
-      paymentDetails1: 'Loan Disbursement',
-      paymentDetails2: 'LN001',
-      paymentDetails3: 'Micro Finance Loan',
-      paymentDetails4: '',
-      paymentDetails5: '',
-      paymentDetails6: '',
-      paymentDetails7: '',
-      chequeNumber: '',
-      chequeTransactionDate: '',
-      micrNumber: '',
-      ifscCode: 'SBIN0000001',
-      beneficiaryBankName: 'State Bank of India',
-      beneficiaryBankBranchName: 'Connaught Place',
-      beneficiaryEmailId: 'priya.sharma@example.com'
-    },
-    {
-      id: '2',
-      transactionType: 'NEFT',
-      beneficiaryCode: 'BEN002',
-      beneficiaryAccountNumber: '0987654321',
-      instrumentAmount: 75000,
-      beneficiaryName: 'Rajesh Kumar',
-      draweeLocation: 'Delhi',
-      printLocation: 'Delhi',
-      beneficiaryAddress1: '456 Gandhi Road',
-      beneficiaryAddress2: 'Gandhi Colony',
-      beneficiaryAddress3: 'North Delhi',
-      beneficiaryAddress4: 'Delhi',
-      beneficiaryAddress5: '110002',
-      instructionReferenceNumber: 'INS002',
-      customerReferenceNumber: 'CUS002',
-      paymentDetails1: 'Loan Disbursement',
-      paymentDetails2: 'LN002',
-      paymentDetails3: 'Group Loan',
-      paymentDetails4: '',
-      paymentDetails5: '',
-      paymentDetails6: '',
-      paymentDetails7: '',
-      chequeNumber: '',
-      chequeTransactionDate: '',
-      micrNumber: '',
-      ifscCode: 'HDFC0000001',
-      beneficiaryBankName: 'HDFC Bank',
-      beneficiaryBankBranchName: 'Karol Bagh',
-      beneficiaryEmailId: 'rajesh.kumar@example.com'
-    }
-  ]);
-  
-  const [uploaderRecords, setUploaderRecords] = useState<NEFTUploaderRecord[]>([
-    {
-      id: '1',
-      transactionId: 'TRX001',
-      loanCode: 'LN001',
-      loanAmount: 50000,
-      settleDate: '2024-01-21',
-      settledStatus: 'settled',
-      isAmortGenerated: true,
-      processStatus: 'success',
-      processMessage: 'Successfully processed'
-    },
-    {
-      id: '2',
-      transactionId: 'TRX002',
-      loanCode: 'LN002',
-      loanAmount: 75000,
-      settleDate: '2024-01-19',
-      settledStatus: 'settled',
-      isAmortGenerated: true,
-      processStatus: 'success',
-      processMessage: 'Successfully processed'
-    }
-  ]);
-  
-  const [filteredDownloaderRecords, setFilteredDownloaderRecords] = useState<NEFTDisbursementRecord[]>(downloaderRecords);
-  const [filteredUploaderRecords, setFilteredUploaderRecords] = useState<NEFTUploaderRecord[]>(uploaderRecords);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>('');
-  const [success, setSuccess] = useState<string>('');
+  const [downloaderRecords, setDownloaderRecords] = useState<NEFTDisbursementRecord[]>([]);
+  const [uploaderRecords, setUploaderRecords] = useState<NEFTUploaderRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
-  const handleDownloaderFilter = (filters: DownloaderFilterOptions) => {
-    // In a real application, this would filter based on the provided criteria
-    // For now, we'll just return all records
-    setFilteredDownloaderRecords(downloaderRecords);
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [dl, ul] = await Promise.all([neftDisbursementService.getDownloaderRecords(), neftDisbursementService.getUploaderRecords()]);
+      setDownloaderRecords(dl); setUploaderRecords(ul);
+    } catch { setError('Failed to load NEFT disbursement data'); }
+    finally { setLoading(false); }
   };
 
-  const handleDownload = () => {
-    alert('NEFT Disbursement download functionality will be implemented');
+  const handleDownloaderFilter = async (filters: NEFTDownloaderFilterOptions) => {
+    try {
+      setLoading(true);
+      const data = await neftDisbursementService.getDownloaderRecords(filters);
+      setDownloaderRecords(data);
+    } catch { setError('Failed to filter records'); }
+    finally { setLoading(false); }
   };
 
-  const handleUpload = () => {
-    alert('NEFT Disbursement upload functionality will be implemented');
+  const handleDownload = async () => {
+    try { await neftDisbursementService.downloadNEFT({}); setSuccess('NEFT file downloaded!'); setTimeout(() => setSuccess(''), 3000); }
+    catch { setError('Download failed'); }
   };
 
-  const handleProcess = () => {
-    alert('NEFT Disbursement process functionality will be implemented');
+  const handleUpload = () => uploadInputRef.current?.click();
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    try {
+      const result = await neftDisbursementService.uploadNEFT(file);
+      setSuccess(result.message || 'File uploaded!'); await loadData(); setTimeout(() => setSuccess(''), 3000);
+    } catch { setError('Upload failed'); }
+    e.target.value = '';
   };
 
-  const getStatusIcon = (status: string) => {
-    return status === 'success' || status === 'settled' ? (
-      <CheckCircle className="w-4 h-4 text-green-600" />
-    ) : (
-      <XCircle className="w-4 h-4 text-red-600" />
-    );
+  const handleProcess = async () => {
+    try {
+      setIsProcessing(true);
+      const result = await neftDisbursementService.processNEFT();
+      setSuccess(result.message || `${result.processed} records processed!`); await loadData(); setTimeout(() => setSuccess(''), 3000);
+    } catch { setError('Processing failed'); }
+    finally { setIsProcessing(false); }
   };
 
-  const getStatusColor = (status: string) => {
-    return status === 'success' || status === 'settled' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
-  };
+  const getStatusIcon = (s: string) => s === 'success' || s === 'settled' ? <CheckCircle className="w-4 h-4 text-green-600" /> : <XCircle className="w-4 h-4 text-red-600" />;
+  const getStatusColor = (s: string) => s === 'success' || s === 'settled' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300';
 
   const downloaderColumns = [
-    {
-      key: 'transactionType',
-      label: 'Transaction Type',
-      sortable: true,
-    },
-    {
-      key: 'beneficiaryCode',
-      label: 'Beneficiary Code',
-      sortable: true,
-      render: (value: string) => (
-        <span className="font-mono">{value}</span>
-      )
-    },
-    {
-      key: 'beneficiaryAccountNumber',
-      label: 'Beneficiary Account Number',
-      render: (value: string) => (
-        <div className="flex items-center space-x-1">
-          <CreditCard className="w-4 h-4 text-gray-400" />
-          <span className="font-mono">{value}</span>
-        </div>
-      )
-    },
-    {
-      key: 'instrumentAmount',
-      label: 'Instrument Amount',
-      sortable: true,
-      render: (value: number) => (
-        <div className="flex items-center space-x-1">
-          <DollarSign className="w-4 h-4 text-gray-400" />
-          <span className="font-medium">₹{value.toLocaleString()}</span>
-        </div>
-      )
-    },
-    {
-      key: 'beneficiaryName',
-      label: 'Beneficiary Name',
-      sortable: true,
-      render: (value: string) => (
-        <div className="flex items-center space-x-2">
-          <User className="w-4 h-4 text-gray-400" />
-          <span className="font-medium">{value}</span>
-        </div>
-      )
-    },
-    {
-      key: 'draweeLocation',
-      label: 'Drawee Location',
-    },
-    {
-      key: 'printLocation',
-      label: 'Print Location',
-    },
-    {
-      key: 'beneficiaryAddress1',
-      label: 'Beneficiary Address 1',
-      render: (value: string) => (
-        <div className="flex items-center space-x-1">
-          <MapPin className="w-4 h-4 text-gray-400" />
-          <span>{value}</span>
-        </div>
-      )
-    },
-    {
-      key: 'beneficiaryAddress2',
-      label: 'Beneficiary Address 2',
-    },
-    {
-      key: 'beneficiaryAddress3',
-      label: 'Beneficiary Address 3',
-    },
-    {
-      key: 'beneficiaryAddress4',
-      label: 'Beneficiary Address 4',
-    },
-    {
-      key: 'beneficiaryAddress5',
-      label: 'Beneficiary Address 5',
-    },
-    {
-      key: 'instructionReferenceNumber',
-      label: 'Instruction Reference Number',
-    },
-    {
-      key: 'customerReferenceNumber',
-      label: 'Customer Reference Number',
-    },
-    {
-      key: 'paymentDetails1',
-      label: 'Payment Details 1',
-    },
-    {
-      key: 'paymentDetails2',
-      label: 'Payment Details 2',
-    },
-    {
-      key: 'paymentDetails3',
-      label: 'Payment Details 3',
-    },
-    {
-      key: 'paymentDetails4',
-      label: 'Payment Details 4',
-    },
-    {
-      key: 'paymentDetails5',
-      label: 'Payment Details 5',
-    },
-    {
-      key: 'paymentDetails6',
-      label: 'Payment Details 6',
-    },
-    {
-      key: 'paymentDetails7',
-      label: 'Payment Details 7',
-    },
-    {
-      key: 'chequeNumber',
-      label: 'Cheque Number',
-    },
-    {
-      key: 'chequeTransactionDate',
-      label: 'Cheque Transaction Date',
-      render: (value: string) => value ? new Date(value).toLocaleDateString() : '-',
-    },
-    {
-      key: 'micrNumber',
-      label: 'MICR Number',
-    },
-    {
-      key: 'ifscCode',
-      label: 'IFSC Code',
-      render: (value: string) => (
-        <span className="font-mono">{value}</span>
-      )
-    },
-    {
-      key: 'beneficiaryBankName',
-      label: 'Beneficiary Bank Name',
-    },
-    {
-      key: 'beneficiaryBankBranchName',
-      label: 'Beneficiary Bank Branch Name',
-    },
-    {
-      key: 'beneficiaryEmailId',
-      label: 'Beneficiary Email Id',
-      render: (value: string) => (
-        <div className="flex items-center space-x-1">
-          <Mail className="w-4 h-4 text-gray-400" />
-          <span>{value}</span>
-        </div>
-      )
-    }
+    { key: 'transactionType', label: 'Transaction Type', sortable: true },
+    { key: 'beneficiaryCode', label: 'Beneficiary Code', sortable: true, render: (v: string) => <span className="font-mono">{v}</span> },
+    { key: 'beneficiaryAccountNumber', label: 'Beneficiary Account Number', render: (v: string) => <div className="flex items-center space-x-1"><CreditCard className="w-4 h-4 text-gray-400" /><span className="font-mono">{v}</span></div> },
+    { key: 'instrumentAmount', label: 'Instrument Amount', sortable: true, render: (v: number) => <div className="flex items-center space-x-1"><DollarSign className="w-4 h-4 text-gray-400" /><span className="font-medium">₹{v.toLocaleString()}</span></div> },
+    { key: 'beneficiaryName', label: 'Beneficiary Name', sortable: true, render: (v: string) => <div className="flex items-center space-x-2"><User className="w-4 h-4 text-gray-400" /><span className="font-medium">{v}</span></div> },
+    { key: 'draweeLocation', label: 'Drawee Location' }, { key: 'printLocation', label: 'Print Location' },
+    { key: 'beneficiaryAddress1', label: 'Beneficiary Address 1', render: (v: string) => <div className="flex items-center space-x-1"><MapPin className="w-4 h-4 text-gray-400" /><span>{v}</span></div> },
+    { key: 'beneficiaryAddress2', label: 'Beneficiary Address 2' }, { key: 'beneficiaryAddress3', label: 'Beneficiary Address 3' }, { key: 'beneficiaryAddress4', label: 'Beneficiary Address 4' }, { key: 'beneficiaryAddress5', label: 'Beneficiary Address 5' },
+    { key: 'instructionReferenceNumber', label: 'Instruction Reference Number' }, { key: 'customerReferenceNumber', label: 'Customer Reference Number' },
+    { key: 'paymentDetails1', label: 'Payment Details 1' }, { key: 'paymentDetails2', label: 'Payment Details 2' }, { key: 'paymentDetails3', label: 'Payment Details 3' }, { key: 'paymentDetails4', label: 'Payment Details 4' }, { key: 'paymentDetails5', label: 'Payment Details 5' }, { key: 'paymentDetails6', label: 'Payment Details 6' }, { key: 'paymentDetails7', label: 'Payment Details 7' },
+    { key: 'chequeNumber', label: 'Cheque Number' }, { key: 'chequeTransactionDate', label: 'Cheque Transaction Date', render: (v: string) => v ? new Date(v).toLocaleDateString() : '-' },
+    { key: 'micrNumber', label: 'MICR Number' },
+    { key: 'ifscCode', label: 'IFSC Code', render: (v: string) => <span className="font-mono">{v}</span> },
+    { key: 'beneficiaryBankName', label: 'Beneficiary Bank Name' }, { key: 'beneficiaryBankBranchName', label: 'Beneficiary Bank Branch Name' },
+    { key: 'beneficiaryEmailId', label: 'Beneficiary Email Id', render: (v: string) => <div className="flex items-center space-x-1"><Mail className="w-4 h-4 text-gray-400" /><span>{v}</span></div> },
   ];
 
   const uploaderColumns = [
-    {
-      key: 'transactionId',
-      label: 'Transaction Id',
-      sortable: true,
-      render: (value: string) => (
-        <span className="font-mono font-medium">{value}</span>
-      )
-    },
-    {
-      key: 'loanCode',
-      label: 'Loan Code',
-      sortable: true,
-      render: (value: string) => (
-        <span className="font-mono">{value}</span>
-      )
-    },
-    {
-      key: 'loanAmount',
-      label: 'Loan Amount',
-      sortable: true,
-      render: (value: number) => (
-        <div className="flex items-center space-x-1">
-          <DollarSign className="w-4 h-4 text-gray-400" />
-          <span className="font-medium">₹{value.toLocaleString()}</span>
-        </div>
-      )
-    },
-    {
-      key: 'settleDate',
-      label: 'Settle Date',
-      sortable: true,
-      render: (value: string) => (
-        <div className="flex items-center space-x-1">
-          <Calendar className="w-4 h-4 text-gray-400" />
-          <span>{new Date(value).toLocaleDateString()}</span>
-        </div>
-      )
-    },
-    {
-      key: 'settledStatus',
-      label: 'Settled Status',
-      sortable: true,
-      render: (value: string) => (
-        <div className="flex items-center space-x-2">
-          {getStatusIcon(value)}
-          <span className={`inline-flex px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(value)}`}>
-            {value.charAt(0).toUpperCase() + value.slice(1)}
-          </span>
-        </div>
-      )
-    },
-    {
-      key: 'isAmortGenerated',
-      label: 'Is Amort Generated',
-      render: (value: boolean) => value ? (
-        <CheckCircle className="w-4 h-4 text-green-600" />
-      ) : (
-        <XCircle className="w-4 h-4 text-gray-400" />
-      ),
-    },
-    {
-      key: 'processStatus',
-      label: 'Process Status',
-      sortable: true,
-      render: (value: string) => (
-        <div className="flex items-center space-x-2">
-          {getStatusIcon(value)}
-          <span className={`inline-flex px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(value)}`}>
-            {value.charAt(0).toUpperCase() + value.slice(1)}
-          </span>
-        </div>
-      )
-    },
-    {
-      key: 'processMessage',
-      label: 'Process Message',
-    }
+    { key: 'transactionId', label: 'Transaction Id', sortable: true, render: (v: string) => <span className="font-mono font-medium">{v}</span> },
+    { key: 'loanCode', label: 'Loan Code', sortable: true, render: (v: string) => <span className="font-mono">{v}</span> },
+    { key: 'loanAmount', label: 'Loan Amount', sortable: true, render: (v: number) => <div className="flex items-center space-x-1"><DollarSign className="w-4 h-4 text-gray-400" /><span className="font-medium">₹{v.toLocaleString()}</span></div> },
+    { key: 'settleDate', label: 'Settle Date', sortable: true, render: (v: string) => <div className="flex items-center space-x-1"><Calendar className="w-4 h-4 text-gray-400" /><span>{new Date(v).toLocaleDateString()}</span></div> },
+    { key: 'settledStatus', label: 'Settled Status', sortable: true, render: (v: string) => <div className="flex items-center space-x-2">{getStatusIcon(v)}<span className={`inline-flex px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(v)}`}>{v.charAt(0).toUpperCase() + v.slice(1)}</span></div> },
+    { key: 'isAmortGenerated', label: 'Is Amort Generated', render: (v: boolean) => v ? <CheckCircle className="w-4 h-4 text-green-600" /> : <XCircle className="w-4 h-4 text-gray-400" /> },
+    { key: 'processStatus', label: 'Process Status', sortable: true, render: (v: string) => <div className="flex items-center space-x-2">{getStatusIcon(v)}<span className={`inline-flex px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(v)}`}>{v.charAt(0).toUpperCase() + v.slice(1)}</span></div> },
+    { key: 'processMessage', label: 'Process Message' },
   ];
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-64">
-        <div className="flex items-center space-x-3">
-          <div className="w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <span className="text-gray-600">Loading NEFT disbursement data...</span>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">NEFT Disbursement</h1>
-        <p className="text-gray-600 mt-1">Manage NEFT disbursements for loans</p>
-      </div>
+      <input ref={uploadInputRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={handleFileChange} />
+      <div><h1 className="text-2xl font-bold text-gray-900 dark:text-white">NEFT Disbursement</h1><p className="text-gray-600 dark:text-gray-400 mt-1">Manage NEFT disbursements for loans</p></div>
+      {success && <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 px-4 py-3 rounded-lg flex items-center space-x-2"><CheckCircle className="w-5 h-5 flex-shrink-0" /><span>{success}</span></div>}
+      {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg flex items-center space-x-2"><AlertCircle className="w-5 h-5 flex-shrink-0" /><span>{error}</span></div>}
 
-      {/* Success/Error Messages */}
-      {success && (
-        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center space-x-2">
-          <CheckCircle className="w-5 h-5 flex-shrink-0" />
-          <span>{success}</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center space-x-2">
-          <XCircle className="w-5 h-5 flex-shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* Tabs */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="border-b border-gray-200">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+        <div className="border-b border-gray-200 dark:border-gray-700">
           <div className="flex">
-            <button
-              onClick={() => setActiveTab('downloader')}
-              className={`px-6 py-3 text-sm font-medium ${
-                activeTab === 'downloader'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              NEFT Disbursement Downloader
-            </button>
-            <button
-              onClick={() => setActiveTab('uploader')}
-              className={`px-6 py-3 text-sm font-medium ${
-                activeTab === 'uploader'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              NEFT Disbursement Uploader
-            </button>
+            {[{ key: 'downloader' as const, label: 'NEFT Disbursement Downloader' }, { key: 'uploader' as const, label: 'NEFT Disbursement Uploader' }].map(({ key, label }) => (
+              <button key={key} onClick={() => setActiveTab(key)} className={`px-6 py-3 text-sm font-medium transition-colors ${activeTab === key ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}>{label}</button>
+            ))}
           </div>
         </div>
 
-        {/* Downloader Tab Content */}
         {activeTab === 'downloader' && (
           <>
-            <div className="p-6 border-b border-gray-200">
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold text-gray-900">NEFT Disbursement Downloader</h2>
-                  <p className="text-sm text-gray-500 mt-1">
-                    {filteredDownloaderRecords.length} records found
-                  </p>
-                </div>
-                
+                <div><h2 className="text-xl font-semibold text-gray-900 dark:text-white">NEFT Disbursement Downloader</h2><p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{downloaderRecords.length} records found</p></div>
                 <div className="flex items-center space-x-3">
                   <DownloaderFilterDropdown onFilter={handleDownloaderFilter} />
-                  
-                  <button
-                    onClick={handleDownload}
-                    className="flex items-center space-x-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>NEFT Disbursement</span>
-                  </button>
+                  <PermissionGuard module="loan" permission="read"><button onClick={handleDownload} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white"><Download className="w-4 h-4" /><span>NEFT Disbursement</span></button></PermissionGuard>
                 </div>
               </div>
             </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    {downloaderColumns.map((column) => (
-                      <th
-                        key={column.key}
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap"
-                      >
-                        {column.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredDownloaderRecords.map((record, index) => (
-                    <tr
-                      key={record.id}
-                      className="hover:bg-gray-50 transition-colors duration-200"
-                    >
-                      {downloaderColumns.map((column) => (
-                        <td key={column.key} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {column.render ? column.render(record[column.key as keyof NEFTDisbursementRecord], record) : record[column.key as keyof NEFTDisbursementRecord]}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-50 dark:bg-gray-700"><tr>{downloaderColumns.map(c => <th key={c.key} className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">{c.label}</th>)}</tr></thead>
+              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">{loading ? <tr><td colSpan={downloaderColumns.length} className="px-6 py-4 text-center text-gray-500">Loading...</td></tr> : downloaderRecords.map(r => <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">{downloaderColumns.map(c => <td key={c.key} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{c.render ? (c.render as any)(r[c.key as keyof NEFTDisbursementRecord], r) : r[c.key as keyof NEFTDisbursementRecord]}</td>)}</tr>)}</tbody>
+            </table></div>
           </>
         )}
 
-        {/* Uploader Tab Content */}
         {activeTab === 'uploader' && (
           <>
-            <div className="p-6 border-b border-gray-200">
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-semibold text-gray-900">NEFT Disbursement Uploader</h2>
-                  <p className="text-sm text-gray-500 mt-1">
-                    {filteredUploaderRecords.length} records found
-                  </p>
-                </div>
-                
+                <div><h2 className="text-xl font-semibold text-gray-900 dark:text-white">NEFT Disbursement Uploader</h2><p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{uploaderRecords.length} records found</p></div>
                 <div className="flex items-center space-x-3">
-                  <button
-                    onClick={handleUpload}
-                    className="flex items-center space-x-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
-                  >
-                    <Upload className="w-4 h-4" />
-                    <span>Upload</span>
-                  </button>
-                  
-                  <button
-                    onClick={handleProcess}
-                    className="flex items-center space-x-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
-                  >
-                    <Play className="w-4 h-4" />
-                    <span>Process</span>
-                  </button>
+                  <PermissionGuard module="loan" permission="write"><button onClick={handleUpload} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white"><Upload className="w-4 h-4" /><span>Upload</span></button></PermissionGuard>
+                  <PermissionGuard module="loan" permission="write"><button onClick={handleProcess} disabled={isProcessing} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white disabled:opacity-50"><Play className="w-4 h-4" /><span>{isProcessing ? 'Processing...' : 'Process'}</span></button></PermissionGuard>
                 </div>
               </div>
             </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    {uploaderColumns.map((column) => (
-                      <th
-                        key={column.key}
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap"
-                      >
-                        {column.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredUploaderRecords.map((record, index) => (
-                    <tr
-                      key={record.id}
-                      className="hover:bg-gray-50 transition-colors duration-200"
-                    >
-                      {uploaderColumns.map((column) => (
-                        <td key={column.key} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {column.render ? column.render(record[column.key as keyof NEFTUploaderRecord], record) : record[column.key as keyof NEFTUploaderRecord]}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-50 dark:bg-gray-700"><tr>{uploaderColumns.map(c => <th key={c.key} className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap">{c.label}</th>)}</tr></thead>
+              <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">{loading ? <tr><td colSpan={uploaderColumns.length} className="px-6 py-4 text-center text-gray-500">Loading...</td></tr> : uploaderRecords.map(r => <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">{uploaderColumns.map(c => <td key={c.key} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{c.render ? (c.render as any)(r[c.key as keyof NEFTUploaderRecord], r) : r[c.key as keyof NEFTUploaderRecord]}</td>)}</tr>)}</tbody>
+            </table></div>
           </>
         )}
       </div>

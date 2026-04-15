@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AreaFormData } from '../../types';
 import { Toggle } from '../Common/Toggle';
+import { pincodeService, Pincode } from '../../services/pincodeService';
 
 interface AreaFormProps {
   onSubmit: (data: AreaFormData) => void;
@@ -47,6 +48,7 @@ export const AreaForm: React.FC<AreaFormProps> = ({
 
   const [errors, setErrors] = useState<Partial<AreaFormData>>({});
   const [isFormValid, setIsFormValid] = useState(false);
+  const [pincodeRecords, setPincodeRecords] = useState<Pincode[]>([]);
 
   const areaTypes = ['Branch', 'Region', 'Zone', 'State', 'District', 'Block'];
   const parentAreaCodes = ['REG001', 'REG002', 'ZON001', 'ZON002', 'ST001', 'ST002'];
@@ -54,10 +56,67 @@ export const AreaForm: React.FC<AreaFormProps> = ({
   const states = ['Delhi', 'Maharashtra', 'Karnataka', 'Tamil Nadu', 'Gujarat', 'Rajasthan'];
   const districts = ['Central Delhi', 'North Delhi', 'South Delhi', 'East Delhi', 'West Delhi'];
   const ratings = ['A+', 'A', 'B+', 'B', 'C+', 'C'];
+  const selectedAreaType = formData.areaType || 'Area';
+  const areaNameLabel = `${selectedAreaType} Name`;
+  const managerIdLabel = `${selectedAreaType} Manager ID`;
+  const openingDateLabel = `${selectedAreaType} Opening Date`;
+  const ratingLabel = `${selectedAreaType} Rating`;
+  const addressSectionTitle = `${selectedAreaType} Address Information`;
+  const contactSectionTitle = `${selectedAreaType} Contact Information`;
+
+  const allDistricts = Array.from(new Set([...districts, ...pincodeRecords.map(record => record.district)]));
+  const allStates = Array.from(new Set([...states, ...pincodeRecords.map(record => record.state)]));
 
   useEffect(() => {
     validateForm();
   }, [formData]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchPincodes = async () => {
+      try {
+        const records = await pincodeService.getAllPincodes();
+        if (isMounted) {
+          setPincodeRecords(records);
+        }
+      } catch (error) {
+        console.error('Failed to fetch pincode data:', error);
+      }
+    };
+
+    fetchPincodes();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const enteredPincode = formData.pincode.trim();
+    if (!enteredPincode || pincodeRecords.length === 0) return;
+
+    const matchedPincode = pincodeRecords.find(record => record.pincode === enteredPincode);
+    if (!matchedPincode) return;
+
+    setFormData(prev => {
+      const updatedDistrict = prev.district !== matchedPincode.district;
+      const updatedState = prev.state !== matchedPincode.state;
+      if (!updatedDistrict && !updatedState) return prev;
+
+      return {
+        ...prev,
+        district: matchedPincode.district,
+        state: matchedPincode.state,
+      };
+    });
+
+    setErrors(prev => ({
+      ...prev,
+      district: undefined,
+      state: undefined,
+    }));
+  }, [formData.pincode, pincodeRecords]);
 
   const validateForm = (): boolean => {
     const newErrors: Partial<AreaFormData> = {};
@@ -137,7 +196,7 @@ export const AreaForm: React.FC<AreaFormProps> = ({
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Area Name <span className="text-red-500">*</span>
+                {areaNameLabel} <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -146,27 +205,27 @@ export const AreaForm: React.FC<AreaFormProps> = ({
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white dark:border-gray-600 ${
                   errors.areaName ? 'border-red-300 dark:border-red-500' : 'border-gray-300 dark:border-gray-600'
                 }`}
-                placeholder="Enter area name"
+                placeholder={`Enter ${areaNameLabel.toLowerCase()}`}
               />
               {errors.areaName && <p className="text-red-500 text-xs mt-1">{errors.areaName}</p>}
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Branch Manager ID
+                {managerIdLabel}
               </label>
               <input
                 type="text"
                 value={formData.branchManagerId}
                 onChange={(e) => handleChange('branchManagerId', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-                placeholder="Enter manager ID"
+                placeholder={`Enter ${managerIdLabel.toLowerCase()}`}
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Branch Opening Date <span className="text-red-500">*</span>
+                {openingDateLabel} <span className="text-red-500">*</span>
               </label>
               <input
                 type="date"
@@ -181,7 +240,7 @@ export const AreaForm: React.FC<AreaFormProps> = ({
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Branch Rating
+                {ratingLabel}
               </label>
               <select
                 value={formData.branchRating}
@@ -200,7 +259,7 @@ export const AreaForm: React.FC<AreaFormProps> = ({
         {/* Address Information Section */}
         <div>
           <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 pb-2 border-b border-gray-200 dark:border-gray-700">
-            🏠 Address Information
+            🏠 {addressSectionTitle}
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
@@ -234,6 +293,22 @@ export const AreaForm: React.FC<AreaFormProps> = ({
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Pincode <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.pincode}
+                onChange={(e) => handleChange('pincode', e.target.value)}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white dark:border-gray-600 ${
+                  errors.pincode ? 'border-red-300 dark:border-red-500' : 'border-gray-300 dark:border-gray-600'
+                }`}
+                placeholder="Enter pincode"
+              />
+              {errors.pincode && <p className="text-red-500 text-xs mt-1">{errors.pincode}</p>}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 District <span className="text-red-500">*</span>
               </label>
               <select
@@ -244,7 +319,7 @@ export const AreaForm: React.FC<AreaFormProps> = ({
                 }`}
               >
                 <option value="">Select District</option>
-                {districts.map(district => (
+                {allDistricts.map(district => (
                   <option key={district} value={district}>{district}</option>
                 ))}
               </select>
@@ -263,27 +338,11 @@ export const AreaForm: React.FC<AreaFormProps> = ({
                 }`}
               >
                 <option value="">Select State</option>
-                {states.map(state => (
+                {allStates.map(state => (
                   <option key={state} value={state}>{state}</option>
                 ))}
               </select>
               {errors.state && <p className="text-red-500 text-xs mt-1">{errors.state}</p>}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Pincode <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={formData.pincode}
-                onChange={(e) => handleChange('pincode', e.target.value)}
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white dark:border-gray-600 ${
-                  errors.pincode ? 'border-red-300 dark:border-red-500' : 'border-gray-300 dark:border-gray-600'
-                }`}
-                placeholder="Enter pincode"
-              />
-              {errors.pincode && <p className="text-red-500 text-xs mt-1">{errors.pincode}</p>}
             </div>
           </div>
         </div>
@@ -291,7 +350,7 @@ export const AreaForm: React.FC<AreaFormProps> = ({
         {/* Contact Information Section */}
         <div>
           <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 pb-2 border-b border-gray-200 dark:border-gray-700">
-            📞 Contact Information
+            📞 {contactSectionTitle}
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
