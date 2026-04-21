@@ -4,7 +4,7 @@ import { CSVUpload } from '../../../components/Common/CSVUpload';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
 import { DataTable } from '../../../components/Common/DataTable';
 import { useAuth } from '../../../hooks/useAuth';
-import { pincodeService, PincodeFormData, PincodeFilterOptions } from '../../../services/pincodeService';
+import { pincodeService, type Pincode as PincodeRecord, PincodeFormData, PincodeFilterOptions } from '../../../services/pincodeService';
 import {
   MapPin, Edit, Trash2, CheckCircle, XCircle,
   Download, Upload, AlertCircle, FileDown, Filter, ChevronDown, Search,
@@ -56,6 +56,7 @@ const PincodeForm: React.FC<{
 }> = ({ onSubmit, onCancel, initialData = {}, isSubmitting }) => {
   const [formData, setFormData] = useState<PincodeFormData>({
     pincode: initialData.pincode || '',
+    state: initialData.state || '',
     status: initialData.status || 'active',
     district: initialData.district || '',
   });
@@ -65,6 +66,7 @@ const PincodeForm: React.FC<{
   const validate = () => {
     const e: Partial<Record<keyof PincodeFormData, string>> = {};
     if (!formData.pincode) e.pincode = 'Pincode is required';
+    if (!formData.state) e.state = 'State is required';
     if (!formData.district) e.district = 'District is required';
     setErrors(e); return Object.keys(e).length === 0;
   };
@@ -83,6 +85,9 @@ const PincodeForm: React.FC<{
           <select value={formData.status} onChange={e => change('status', e.target.value as 'active' | 'inactive')} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white">
             <option value="active">Active</option><option value="inactive">Inactive</option>
           </select></div>
+        <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">State <span className="text-red-500">*</span></label>
+          <input type="text" value={formData.state} onChange={e => change('state', e.target.value)} className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white dark:border-gray-600 ${errors.state ? 'border-red-300' : 'border-gray-300'}`} placeholder="Enter state" />
+          {errors.state && <p className="text-red-500 text-xs mt-1">{errors.state}</p>}</div>
         <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">District <span className="text-red-500">*</span></label>
           <select value={formData.district} onChange={e => change('district', e.target.value)} className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white dark:border-gray-600 ${errors.district ? 'border-red-300' : 'border-gray-300'}`}>
             <option value="">Select District</option>{districts.map(d => <option key={d} value={d}>{d}</option>)}
@@ -98,12 +103,12 @@ const PincodeForm: React.FC<{
 
 export const Pincode: React.FC = () => {
   const { hasPermission } = useAuth();
-  const [pincodes, setPincodes] = useState<Pincode[]>([]);
-  const [filteredPincodes, setFilteredPincodes] = useState<Pincode[]>([]);
+  const [pincodes, setPincodes] = useState<PincodeRecord[]>([]);
+  const [filteredPincodes, setFilteredPincodes] = useState<PincodeRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showCSVModal, setShowCSVModal] = useState(false);
-  const [editingPincode, setEditingPincode] = useState<Pincode | null>(null);
+  const [editingPincode, setEditingPincode] = useState<PincodeRecord | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -174,7 +179,7 @@ export const Pincode: React.FC = () => {
   const columns = [
     {
       key: 'actions', label: 'Action',
-      render: (_: unknown, row: Pincode) => (
+      render: (_: unknown, row: PincodeRecord) => (
         <div className="flex items-center space-x-2">
           <PermissionGuard module="loan" permission="write"><button onClick={() => setEditingPincode(row)} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"><Edit className="w-4 h-4" /></button></PermissionGuard>
           <PermissionGuard module="loan" permission="delete"><button onClick={() => handleDelete(row.id)} className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"><Trash2 className="w-4 h-4" /></button></PermissionGuard>
@@ -218,7 +223,7 @@ export const Pincode: React.FC = () => {
         {editingPincode && <PincodeForm onSubmit={handleUpdate} onCancel={() => setEditingPincode(null)} initialData={editingPincode} isSubmitting={isSubmitting} />}
       </Modal>
       <Modal isOpen={showCSVModal} onClose={() => setShowCSVModal(false)} title="Upload Pincodes CSV" size="lg">
-        <CSVUpload onUpload={handleCSVUpload} onCancel={() => setShowCSVModal(false)} templateColumns={['pincode', 'status', 'district']} entityName="pincodes" />
+        <CSVUpload onUpload={handleCSVUpload} onCancel={() => setShowCSVModal(false)} templateColumns={['pincode', 'state', 'status', 'district']} entityName="pincodes" />
       </Modal>
     </div>
   );

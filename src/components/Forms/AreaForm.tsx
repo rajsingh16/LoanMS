@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AreaFormData } from '../../types';
 import { Toggle } from '../Common/Toggle';
-import { pincodeService, Pincode } from '../../services/pincodeService';
+import { usePincodeLookup } from '../../hooks/usePincodeLookup';
 
 interface AreaFormProps {
   onSubmit: (data: AreaFormData) => void;
@@ -48,7 +48,6 @@ export const AreaForm: React.FC<AreaFormProps> = ({
 
   const [errors, setErrors] = useState<Partial<AreaFormData>>({});
   const [isFormValid, setIsFormValid] = useState(false);
-  const [pincodeRecords, setPincodeRecords] = useState<Pincode[]>([]);
 
   const areaTypes = ['Branch', 'Region', 'Zone', 'State', 'District', 'Block'];
   const parentAreaCodes = ['REG001', 'REG002', 'ZON001', 'ZON002', 'ST001', 'ST002'];
@@ -64,39 +63,15 @@ export const AreaForm: React.FC<AreaFormProps> = ({
   const addressSectionTitle = `${selectedAreaType} Address Information`;
   const contactSectionTitle = `${selectedAreaType} Contact Information`;
 
-  const allDistricts = Array.from(new Set([...districts, ...pincodeRecords.map(record => record.district)]));
-  const allStates = Array.from(new Set([...states, ...pincodeRecords.map(record => record.state)]));
+  const { match: matchedPincode } = usePincodeLookup(formData.pincode);
+  const allDistricts = Array.from(new Set([...districts, ...(matchedPincode?.district ? [matchedPincode.district] : [])]));
+  const allStates = Array.from(new Set([...states, ...(matchedPincode?.state ? [matchedPincode.state] : [])]));
 
   useEffect(() => {
     validateForm();
   }, [formData]);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const fetchPincodes = async () => {
-      try {
-        const records = await pincodeService.getAllPincodes();
-        if (isMounted) {
-          setPincodeRecords(records);
-        }
-      } catch (error) {
-        console.error('Failed to fetch pincode data:', error);
-      }
-    };
-
-    fetchPincodes();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const enteredPincode = formData.pincode.trim();
-    if (!enteredPincode || pincodeRecords.length === 0) return;
-
-    const matchedPincode = pincodeRecords.find(record => record.pincode === enteredPincode);
     if (!matchedPincode) return;
 
     setFormData(prev => {
@@ -116,7 +91,7 @@ export const AreaForm: React.FC<AreaFormProps> = ({
       district: undefined,
       state: undefined,
     }));
-  }, [formData.pincode, pincodeRecords]);
+  }, [matchedPincode]);
 
   const validateForm = (): boolean => {
     const newErrors: Partial<AreaFormData> = {};

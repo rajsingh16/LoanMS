@@ -21,6 +21,8 @@ export interface Center {
   villageId: string;
   villageName: string;
   city?: string;
+  district?: string;
+  state?: string;
   meetingPlace?: string;
   latitude?: number;
   longitude?: number;
@@ -44,6 +46,8 @@ export interface CenterFormData {
   villageId: string;
   pincode?: string;
   city?: string;
+  district?: string;
+  state?: string;
   meetingPlace?: string;
   latitude?: number;
   longitude?: number;

@@ -14,6 +14,7 @@ export interface Pincode {
 
 export interface PincodeFormData {
   pincode: string;
+  state: string;
   status: 'active' | 'inactive';
   district: string;
 }
@@ -31,6 +32,24 @@ export const pincodeService = {
     const res = await apiFetch(BASE_URL);
     const json = await res.json();
     return json.data ?? json;
+  },
+
+  lookupPincode: async (pincode: string): Promise<Pincode | null> => {
+    const sanitized = pincode.trim();
+    if (!/^\d{6}$/.test(sanitized)) {
+      return null;
+    }
+
+    const res = await apiFetch(`${BASE_URL}/lookup/${sanitized}`);
+    if (res.status === 404) {
+      return null;
+    }
+
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error?.message || json.error || 'Failed to lookup pincode');
+    }
+    return json.data ?? null;
   },
 
   createPincode: async (formData: PincodeFormData): Promise<Pincode> => {
@@ -89,7 +108,7 @@ export const pincodeService = {
   },
 
   downloadTemplate: async (): Promise<void> => {
-    const headers = ['pincode', 'status', 'district'];
+    const headers = ['pincode', 'state', 'status', 'district'];
     const blob = new Blob([headers.join(',')], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');

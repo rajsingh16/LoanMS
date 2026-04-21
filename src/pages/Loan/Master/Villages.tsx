@@ -7,15 +7,14 @@ import { PermissionGuard } from '../../../components/Common/PermissionGuard';
 import { DataTable } from '../../../components/Common/DataTable';
 import { Village, VillageFormData, VillageFilterOptions } from '../../../types/village';
 import { villageService } from '../../../services/villageService';
-import { useAuth } from '../../../hooks/useAuth';
+import { db } from '../../../lib/api';
 import {
-  Building, MapPin, Users, Calendar, Edit, Trash2, Phone,
+  Building, Users, Calendar, Edit, Trash2, Phone,
   CheckCircle, XCircle, Download, Upload, AlertCircle, FileDown,
   Home, School, Guitar as Hospital, ShoppingCart,
 } from 'lucide-react';
 
 export const Villages: React.FC = () => {
-  const { hasPermission } = useAuth();
   const [villages, setVillages] = useState<Village[]>([]);
   const [filteredVillages, setFilteredVillages] = useState<Village[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,12 +24,16 @@ export const Villages: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [branchOptions, setBranchOptions] = useState<{ id: string; name: string }[]>([]);
 
   const branches = Array.from(new Set(villages.map(v => v.branchName)));
   const pincodes = Array.from(new Set(villages.map(v => v.pincode)));
   const villageNames = Array.from(new Set(villages.map(v => v.villageName)));
 
-  useEffect(() => { loadVillages(); }, []);
+  useEffect(() => {
+    loadVillages();
+    loadBranchOptions();
+  }, []);
 
   const loadVillages = async () => {
     try {
@@ -39,6 +42,22 @@ export const Villages: React.FC = () => {
       setVillages(data); setFilteredVillages(data);
     } catch { setError('Failed to load villages'); }
     finally { setLoading(false); }
+  };
+
+  const loadBranchOptions = async () => {
+    try {
+      const { data } = await db.getBranches();
+      if (data) {
+        setBranchOptions(
+          data.map((branch: { id: string; branch_name: string }) => ({
+            id: branch.id,
+            name: branch.branch_name,
+          }))
+        );
+      }
+    } catch (loadError) {
+      console.error('Failed to load branches for village form', loadError);
+    }
   };
 
   const handleFilter = (filters: VillageFilterOptions) => {
@@ -147,10 +166,10 @@ export const Villages: React.FC = () => {
       {success && <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 px-4 py-3 rounded-lg flex items-center space-x-2"><CheckCircle className="w-5 h-5 flex-shrink-0" /><span>{success}</span></div>}
       {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg flex items-center space-x-2"><AlertCircle className="w-5 h-5 flex-shrink-0" /><span>{error}</span></div>}
       <DataTable columns={columns} data={filteredVillages} title="Village Management" loading={loading} onAdd={() => setShowAddModal(true)} filterComponent={filterComponent} />
-      <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="Add New Village" size="xl"><VillageForm onSubmit={handleAdd} onCancel={() => setShowAddModal(false)} isSubmitting={isSubmitting} /></Modal>
+      <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="Add New Village" size="xl"><VillageForm onSubmit={handleAdd} onCancel={() => setShowAddModal(false)} isSubmitting={isSubmitting} branches={branchOptions} /></Modal>
       <Modal isOpen={!!editingVillage} onClose={() => setEditingVillage(null)} title="Edit Village" size="xl">
         {editingVillage && (
-          <VillageForm onSubmit={handleUpdate} onCancel={() => setEditingVillage(null)} isSubmitting={isSubmitting}
+          <VillageForm onSubmit={handleUpdate} onCancel={() => setEditingVillage(null)} isSubmitting={isSubmitting} branches={branchOptions}
             initialData={{ countryName: editingVillage.countryName, branchId: editingVillage.branchId, villageName: editingVillage.villageName, villageClassification: editingVillage.villageClassification, pincode: editingVillage.pincode, district: editingVillage.district, postOffice: editingVillage.postOffice, mohallaName: editingVillage.mohallaName, panchayatName: editingVillage.panchayatName, policeStation: editingVillage.policeStation, contactPersonName: editingVillage.contactPersonName, language: editingVillage.language, customerBaseExpected: editingVillage.customerBaseExpected, distanceFromBranch: editingVillage.distanceFromBranch, bankDistance: editingVillage.bankDistance, nearestBankName: editingVillage.nearestBankName, hospitalDistance: editingVillage.hospitalDistance, nearestHospitalName: editingVillage.nearestHospitalName, policeStationDistance: editingVillage.policeStationDistance, population: editingVillage.population, roadType: editingVillage.roadType, schoolType: editingVillage.schoolType, hospitalType: editingVillage.hospitalType, religionMajority: editingVillage.religionMajority, category: editingVillage.category }}
           />
         )}

@@ -1,16 +1,21 @@
 import React, { useState } from 'react';
 import { VillageFormData } from '../../types/village';
+import { usePincodeLookup } from '../../hooks/usePincodeLookup';
 
 interface VillageFormProps {
   onSubmit: (data: VillageFormData) => void;
   onCancel: () => void;
   initialData?: Partial<VillageFormData>;
+  isSubmitting?: boolean;
+  branches?: { id: string; name: string }[];
 }
 
 export const VillageForm: React.FC<VillageFormProps> = ({
   onSubmit,
   onCancel,
-  initialData = {}
+  initialData = {},
+  isSubmitting = false,
+  branches = []
 }) => {
   const [formData, setFormData] = useState<VillageFormData>({
     countryName: initialData.countryName || 'India',
@@ -41,8 +46,8 @@ export const VillageForm: React.FC<VillageFormProps> = ({
   });
 
   const [errors, setErrors] = useState<Partial<VillageFormData>>({});
+  const { match: matchedPincode } = usePincodeLookup(formData.pincode);
 
-  const branches = ['BR001', 'BR002', 'BR003', 'BR004', 'BR005'];
   const villageClassifications = ['Rural', 'Semi-Urban', 'Urban', 'Metro'];
   const languages = ['Hindi', 'English', 'Bengali', 'Tamil', 'Telugu', 'Marathi', 'Gujarati', 'Kannada', 'Malayalam', 'Punjabi'];
   const roadTypes = ['Paved', 'Unpaved', 'Mixed'];
@@ -50,6 +55,20 @@ export const VillageForm: React.FC<VillageFormProps> = ({
   const hospitalTypes = ['Government', 'Private', 'Both', 'None'];
   const religions = ['Hindu', 'Muslim', 'Christian', 'Sikh', 'Buddhist', 'Jain', 'Other'];
   const categories = ['General', 'OBC', 'SC', 'ST', 'Other'];
+
+  React.useEffect(() => {
+    if (!matchedPincode) return;
+
+    setFormData(prev => ({
+      ...prev,
+      district: matchedPincode.district,
+    }));
+
+    setErrors(prev => ({
+      ...prev,
+      district: undefined,
+    }));
+  }, [matchedPincode]);
 
   const validateForm = (): boolean => {
     const newErrors: Partial<VillageFormData> = {};
@@ -135,7 +154,7 @@ export const VillageForm: React.FC<VillageFormProps> = ({
             >
               <option value="">Select Branch</option>
               {branches.map(branch => (
-                <option key={branch} value={branch}>{branch}</option>
+                <option key={branch.id} value={branch.id}>{branch.name}</option>
               ))}
             </select>
             {errors.branchId && <p className="text-red-500 text-xs mt-1">{errors.branchId}</p>}
@@ -565,15 +584,17 @@ export const VillageForm: React.FC<VillageFormProps> = ({
         <button
           type="button"
           onClick={onCancel}
+          disabled={isSubmitting}
           className="px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200"
         >
           Cancel
         </button>
         <button
           type="submit"
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
+          disabled={isSubmitting}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50"
         >
-          Save Village
+          {isSubmitting ? 'Saving...' : 'Save Village'}
         </button>
       </div>
     </form>

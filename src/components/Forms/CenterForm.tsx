@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CenterFormData } from '../../types/center';
 import { Toggle } from '../Common/Toggle';
+import { usePincodeLookup } from '../../hooks/usePincodeLookup';
 
 interface CenterFormProps {
   onSubmit: (data: CenterFormData) => void;
@@ -35,6 +36,8 @@ export const CenterForm: React.FC<CenterFormProps> = ({
     villageId: initialData.villageId || '',
     pincode: initialData.pincode || '',
     city: initialData.city || '',
+    district: initialData.district || '',
+    state: initialData.state || '',
     meetingPlace: initialData.meetingPlace || '',
     latitude: initialData.latitude,
     longitude: initialData.longitude,
@@ -46,6 +49,7 @@ export const CenterForm: React.FC<CenterFormProps> = ({
 
   const [errors, setErrors] = useState<Partial<CenterFormData>>({});
   const [isFormValid, setIsFormValid] = useState(false);
+  const { match: matchedPincode, loading: lookupLoading } = usePincodeLookup(formData.pincode || '');
 
   const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   
@@ -63,6 +67,23 @@ export const CenterForm: React.FC<CenterFormProps> = ({
   useEffect(() => {
     validateForm();
   }, [formData]);
+
+  useEffect(() => {
+    if (!matchedPincode) return;
+
+    setFormData(prev => ({
+      ...prev,
+      city: prev.city || matchedPincode.district,
+      district: matchedPincode.district,
+      state: matchedPincode.state,
+    }));
+
+    setErrors(prev => ({
+      ...prev,
+      district: undefined,
+      state: undefined,
+    }));
+  }, [matchedPincode]);
 
   const validateForm = (): boolean => {
     const newErrors: Partial<CenterFormData> = {};
@@ -310,6 +331,7 @@ export const CenterForm: React.FC<CenterFormProps> = ({
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                 placeholder="Enter pincode"
               />
+              {lookupLoading && <p className="text-xs text-gray-500 mt-1">Looking up district and state...</p>}
             </div>
 
             <div>
@@ -322,6 +344,32 @@ export const CenterForm: React.FC<CenterFormProps> = ({
                 onChange={(e) => handleChange('city', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                 placeholder="Enter city"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                District
+              </label>
+              <input
+                type="text"
+                value={formData.district || ''}
+                onChange={(e) => handleChange('district', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                placeholder="Auto-filled from pincode"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                State
+              </label>
+              <input
+                type="text"
+                value={formData.state || ''}
+                onChange={(e) => handleChange('state', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                placeholder="Auto-filled from pincode"
               />
             </div>
 

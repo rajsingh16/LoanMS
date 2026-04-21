@@ -88,13 +88,13 @@ export const Centers: React.FC = () => {
       }
 
       // Load villages
-      const villageRes = await fetch('/api/villages');
+      const villageRes = await apiFetch('/api/villages');
       const villageJson = await villageRes.json();
       if (villageJson.data) {
         setVillages(
-          villageJson.data.map((v: { id: string; name: string }) => ({
+          villageJson.data.map((v: { id: string; village_name: string }) => ({
             id: v.id,
-            name: v.name,
+            name: v.village_name,
           }))
         );
       }
@@ -559,6 +559,8 @@ export const Centers: React.FC = () => {
               villageId: editingCenter.villageId,
               pincode: editingCenter.pincode,
               city: editingCenter.city,
+              district: editingCenter.district,
+              state: editingCenter.state,
               meetingPlace: editingCenter.meetingPlace,
               latitude: editingCenter.latitude,
               longitude: editingCenter.longitude,
@@ -599,6 +601,8 @@ export const Centers: React.FC = () => {
             'villageId',
             'pincode',
             'city',
+            'district',
+            'state',
             'meetingPlace',
             'latitude',
             'longitude',

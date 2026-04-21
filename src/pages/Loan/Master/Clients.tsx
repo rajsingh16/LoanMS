@@ -4,7 +4,7 @@ import { ClientFilterDropdown } from '../../../components/Common/ClientFilterDro
 import { CSVUpload } from '../../../components/Common/CSVUpload';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
 import { DataTable } from '../../../components/Common/DataTable';
-import { clientService, EnhancedLoanClient, ClientFormData, ClientFilterOptions } from '../../../services/clientService.tsx';
+import { clientService, EnhancedLoanClient, ClientFormData, ClientFilterOptions } from '../../../services/clientService';
 import {
   User,
   Phone,
