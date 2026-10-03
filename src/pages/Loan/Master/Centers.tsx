@@ -5,8 +5,7 @@ import { CenterForm } from '../../../components/Forms/CenterForm';
 import { CSVUpload } from '../../../components/Common/CSVUpload';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
 import { DataTable } from '../../../components/Common/DataTable';
-import { Center, CenterFormData, CenterFilterOptions } from '../../../types/center';
-import { useAuth } from '../../../hooks/useAuth';
+import { BranchOption, Center, CenterFormData, CenterFilterOptions } from '../../../types/center';
 import { centerService } from '../../../services/centerService';
 import { apiFetch, db } from '../../../lib/api';
 import {
@@ -27,7 +26,6 @@ import {
 } from 'lucide-react';
 
 export const Centers: React.FC = () => {
-  const { hasPermission } = useAuth();
   const [centers, setCenters] = useState<Center[]>([]);
   const [filteredCenters, setFilteredCenters] = useState<Center[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,7 +37,9 @@ export const Centers: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Data for dropdowns
-  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(false);
+  const [branchesError, setBranchesError] = useState('');
   const [fieldOfficers, setFieldOfficers] = useState<{ id: string; name: string }[]>([]);
   const [villages, setVillages] = useState<{ id: string; name: string }[]>([]);
 
@@ -64,17 +64,30 @@ export const Centers: React.FC = () => {
 
   const loadDropdownData = async () => {
     try {
-      // Load branches
+      setBranchesLoading(true);
+      setBranchesError('');
       const { data: branchData } = await db.getBranches();
       if (branchData) {
         setBranches(
-          branchData.map((branch: { id: string; branch_name: string }) => ({
+          branchData.map((branch: { id: string; branch_name: string; branch_code?: string }) => ({
             id: branch.id,
             name: branch.branch_name,
+            code: branch.branch_code,
           }))
         );
+      } else {
+        setBranches([]);
+        setBranchesError('Failed to load branches');
       }
+    } catch (err) {
+      setBranches([]);
+      setBranchesError('Failed to load branches');
+      console.error('Error loading branches:', err);
+    } finally {
+      setBranchesLoading(false);
+    }
 
+    try {
       // Load field officers (users with field_officer role)
       const foRes = await apiFetch('/api/users/by-role/field_officer');
       const foJson = await foRes.json();
@@ -86,7 +99,11 @@ export const Centers: React.FC = () => {
           }))
         );
       }
+    } catch (err) {
+      console.error('Error loading field officers:', err);
+    }
 
+    try {
       // Load villages
       const villageRes = await apiFetch('/api/villages');
       const villageJson = await villageRes.json();
@@ -99,7 +116,7 @@ export const Centers: React.FC = () => {
         );
       }
     } catch (err) {
-      console.error('Error loading dropdown data:', err);
+      console.error('Error loading villages:', err);
     }
   };
 
@@ -139,7 +156,7 @@ export const Centers: React.FC = () => {
       setSuccess('Center created successfully!');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError('Failed to create center');
+      setError(err instanceof Error ? err.message : 'Failed to create center');
       console.error('Error creating center:', err);
     } finally {
       setIsSubmitting(false);
@@ -162,7 +179,7 @@ export const Centers: React.FC = () => {
       setSuccess('Center updated successfully!');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError('Failed to update center');
+      setError(err instanceof Error ? err.message : 'Failed to update center');
       console.error('Error updating center:', err);
     } finally {
       setIsSubmitting(false);
@@ -529,6 +546,8 @@ export const Centers: React.FC = () => {
           onCancel={() => setShowAddModal(false)}
           isSubmitting={isSubmitting}
           branches={branches}
+          branchesLoading={branchesLoading}
+          branchesError={branchesError}
           fieldOfficers={fieldOfficers}
           villages={villages}
         />
@@ -571,6 +590,8 @@ export const Centers: React.FC = () => {
             }}
             isSubmitting={isSubmitting}
             branches={branches}
+            branchesLoading={branchesLoading}
+            branchesError={branchesError}
             fieldOfficers={fieldOfficers}
             villages={villages}
           />

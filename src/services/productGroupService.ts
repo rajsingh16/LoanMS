@@ -9,7 +9,7 @@ export const productGroupService = {
   getAllProductGroups: async (): Promise<ProductGroup[]> => {
     const res = await apiFetch(BASE_URL);
     const json = await res.json();
-    return json ?? json;
+    return json.data ?? json;
   },
 
   createProductGroup: async (formData: ProductGroupFormData): Promise<ProductGroup> => {

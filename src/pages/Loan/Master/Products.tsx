@@ -5,8 +5,9 @@ import { ProductForm } from '../../../components/Forms/ProductForm';
 import { CSVUpload } from '../../../components/Common/CSVUpload';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
 import { DataTable } from '../../../components/Common/DataTable';
-import { LoanProduct, ProductFilterOptions } from '../../../types/product';
+import { LoanProduct, ProductFilterOptions, ProductGroup } from '../../../types/product';
 import { productService, ProductFormData } from '../../../services/productService';
+import { productGroupService } from '../../../services/productGroupService';
 import { useAuth } from '../../../hooks/useAuth';
 import {
   Package, DollarSign, Calendar, Edit, Trash2, CheckCircle, XCircle,
@@ -16,6 +17,7 @@ import {
 export const Products: React.FC = () => {
   const { hasPermission } = useAuth();
   const [products, setProducts] = useState<LoanProduct[]>([]);
+  const [productGroups, setProductGroups] = useState<ProductGroup[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<LoanProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -25,7 +27,10 @@ export const Products: React.FC = () => {
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const productGroupIds = Array.from(new Set(products.map(p => p.productGroupId)));
+  const productGroupIds = Array.from(new Set([
+    ...productGroups.map(pg => pg.productGroupCode),
+    ...products.map(p => p.productGroupId),
+  ].filter(Boolean)));
   const productIds = Array.from(new Set(products.map(p => p.productId)));
 
   useEffect(() => { loadProducts(); }, []);
@@ -33,8 +38,12 @@ export const Products: React.FC = () => {
   const loadProducts = async () => {
     try {
       setLoading(true);
-      const data = await productService.getAllProducts();
+      const [data, groups] = await Promise.all([
+        productService.getAllProducts(),
+        productGroupService.getAllProductGroups(),
+      ]);
       setProducts(data); setFilteredProducts(data);
+      setProductGroups(groups);
     } catch { setError('Failed to load products'); }
     finally { setLoading(false); }
   };
@@ -155,8 +164,8 @@ export const Products: React.FC = () => {
       {success && <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 px-4 py-3 rounded-lg flex items-center space-x-2"><CheckCircle className="w-5 h-5 flex-shrink-0" /><span>{success}</span></div>}
       {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg flex items-center space-x-2"><AlertCircle className="w-5 h-5 flex-shrink-0" /><span>{error}</span></div>}
       <DataTable columns={columns} data={filteredProducts} title="Product Management" loading={loading} onAdd={() => setShowAddModal(true)} filterComponent={filterComponent} />
-      <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="Add New Product" size="xl"><ProductForm onSubmit={handleAdd} onCancel={() => setShowAddModal(false)} isSubmitting={isSubmitting} /></Modal>
-      <Modal isOpen={!!editingProduct} onClose={() => setEditingProduct(null)} title="Edit Product" size="xl">{editingProduct && <ProductForm onSubmit={handleUpdate} onCancel={() => setEditingProduct(null)} initialData={editingProduct} isSubmitting={isSubmitting} />}</Modal>
+      <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="Add New Product" size="xl"><ProductForm onSubmit={handleAdd} onCancel={() => setShowAddModal(false)} productGroups={productGroups} isSubmitting={isSubmitting} /></Modal>
+      <Modal isOpen={!!editingProduct} onClose={() => setEditingProduct(null)} title="Edit Product" size="xl">{editingProduct && <ProductForm onSubmit={handleUpdate} onCancel={() => setEditingProduct(null)} initialData={editingProduct} productGroups={productGroups} isSubmitting={isSubmitting} />}</Modal>
       <Modal isOpen={showCSVModal} onClose={() => setShowCSVModal(false)} title="Upload Products CSV" size="lg"><CSVUpload onUpload={handleCSVUpload} onCancel={() => setShowCSVModal(false)} templateColumns={['productGroupId', 'productCode', 'productName', 'interestRate', 'tenureInMonths', 'loanAmount', 'status', 'effectiveStartDate', 'effectiveEndDate']} entityName="products" /></Modal>
     </div>
   );

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { CenterFormData } from '../../types/center';
+import React, { useState, useEffect, useRef } from 'react';
+import { BranchOption, CenterFormData } from '../../types/center';
 import { Toggle } from '../Common/Toggle';
 import { usePincodeLookup } from '../../hooks/usePincodeLookup';
 
@@ -8,7 +8,9 @@ interface CenterFormProps {
   onCancel: () => void;
   initialData?: Partial<CenterFormData>;
   isSubmitting?: boolean;
-  branches: { id: string; name: string }[];
+  branches: BranchOption[];
+  branchesLoading?: boolean;
+  branchesError?: string;
   fieldOfficers: { id: string; name: string }[];
   villages: { id: string; name: string }[];
 }
@@ -19,6 +21,8 @@ export const CenterForm: React.FC<CenterFormProps> = ({
   initialData = {},
   isSubmitting = false,
   branches,
+  branchesLoading = false,
+  branchesError = '',
   fieldOfficers,
   villages
 }) => {
@@ -49,6 +53,9 @@ export const CenterForm: React.FC<CenterFormProps> = ({
 
   const [errors, setErrors] = useState<Partial<CenterFormData>>({});
   const [isFormValid, setIsFormValid] = useState(false);
+  const [branchSearch, setBranchSearch] = useState('');
+  const [isBranchOpen, setIsBranchOpen] = useState(false);
+  const branchDropdownRef = useRef<HTMLDivElement>(null);
   const { match: matchedPincode, loading: lookupLoading } = usePincodeLookup(formData.pincode || '');
 
   const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -66,7 +73,25 @@ export const CenterForm: React.FC<CenterFormProps> = ({
 
   useEffect(() => {
     validateForm();
-  }, [formData]);
+  }, [formData, branches, branchesLoading]);
+
+  useEffect(() => {
+    const selectedBranch = branches.find(branch => branch.id === formData.branchId);
+    if (selectedBranch) {
+      setBranchSearch(selectedBranch.name);
+    }
+  }, [branches, formData.branchId]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (branchDropdownRef.current && !branchDropdownRef.current.contains(event.target as Node)) {
+        setIsBranchOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (!matchedPincode) return;
@@ -89,6 +114,7 @@ export const CenterForm: React.FC<CenterFormProps> = ({
     const newErrors: Partial<CenterFormData> = {};
 
     if (!formData.branchId) newErrors.branchId = 'Branch is required';
+    if (!branchesLoading && branches.length === 0) newErrors.branchId = 'No branches available';
     if (!formData.centerName) newErrors.centerName = 'Center name is required';
     if (!formData.centerDay) newErrors.centerDay = 'Center day is required';
     if (!formData.centerTime) newErrors.centerTime = 'Center time is required';
@@ -116,6 +142,21 @@ export const CenterForm: React.FC<CenterFormProps> = ({
     }
   };
 
+  const filteredBranches = branches.filter(branch => {
+    const query = branchSearch.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      branch.name.toLowerCase().includes(query) ||
+      (branch.code || '').toLowerCase().includes(query)
+    );
+  });
+
+  const selectBranch = (branch: BranchOption) => {
+    setBranchSearch(branch.name);
+    setIsBranchOpen(false);
+    handleChange('branchId', branch.id);
+  };
+
   return (
     <form onSubmit={handleSubmit} className="relative">
       <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(90vh-130px)]">
@@ -129,18 +170,50 @@ export const CenterForm: React.FC<CenterFormProps> = ({
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 Branch <span className="text-red-500">*</span>
               </label>
-              <select
-                value={formData.branchId}
-                onChange={(e) => handleChange('branchId', e.target.value)}
-                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white dark:border-gray-600 ${
-                  errors.branchId ? 'border-red-300 dark:border-red-500' : 'border-gray-300 dark:border-gray-600'
-                }`}
-              >
-                <option value="">Select Branch</option>
-                {branches.map(branch => (
-                  <option key={branch.id} value={branch.id}>{branch.name}</option>
-                ))}
-              </select>
+              <div className="relative" ref={branchDropdownRef}>
+                <input
+                  type="text"
+                  value={branchSearch}
+                  onFocus={() => setIsBranchOpen(true)}
+                  onChange={(e) => {
+                    setBranchSearch(e.target.value);
+                    setIsBranchOpen(true);
+                    if (formData.branchId) {
+                      handleChange('branchId', '');
+                    }
+                  }}
+                  disabled={branchesLoading || branches.length === 0}
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white dark:border-gray-600 disabled:bg-gray-100 disabled:dark:bg-gray-800 disabled:cursor-not-allowed ${
+                    errors.branchId ? 'border-red-300 dark:border-red-500' : 'border-gray-300 dark:border-gray-600'
+                  }`}
+                  placeholder={branchesLoading ? 'Loading branches...' : 'Search and select branch'}
+                />
+                {isBranchOpen && !branchesLoading && branches.length > 0 && (
+                  <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-lg">
+                    {filteredBranches.length > 0 ? (
+                      filteredBranches.map(branch => (
+                        <button
+                          type="button"
+                          key={branch.id}
+                          onClick={() => selectBranch(branch)}
+                          className="w-full px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-700 focus:bg-gray-50 dark:focus:bg-gray-700 focus:outline-none"
+                        >
+                          <span className="block text-sm font-medium text-gray-900 dark:text-white">{branch.name}</span>
+                          {branch.code && <span className="block text-xs text-gray-500 dark:text-gray-400">{branch.code}</span>}
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">No matching branches</div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {branchesError && <p className="text-red-500 text-xs mt-1">{branchesError}</p>}
+              {!branchesLoading && branches.length === 0 && (
+                <p className="text-amber-600 dark:text-amber-400 text-xs mt-1">
+                  No branches available. Please create a branch in the Area module first.
+                </p>
+              )}
               {errors.branchId && <p className="text-red-500 text-xs mt-1">{errors.branchId}</p>}
             </div>
 

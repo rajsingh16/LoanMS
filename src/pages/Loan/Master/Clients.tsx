@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../../../components/Common/Modal';
 import { ClientFilterDropdown } from '../../../components/Common/ClientFilterDropdown';
+import { ClientForm } from '../../../components/Forms/ClientForm';
 import { CSVUpload } from '../../../components/Common/CSVUpload';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
 import { DataTable } from '../../../components/Common/DataTable';
@@ -29,6 +30,7 @@ export const Clients: React.FC = () => {
   const [clients, setClients] = useState<EnhancedLoanClient[]>([]);
   const [filteredClients, setFilteredClients] = useState<EnhancedLoanClient[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showAddModal, setShowAddModal] = useState(false);
   const [showCSVModal, setShowCSVModal] = useState(false);
   const [editingClient, setEditingClient] = useState<EnhancedLoanClient | null>(null);
   const [success, setSuccess] = useState<string>('');
@@ -90,11 +92,30 @@ export const Clients: React.FC = () => {
     }
   };
 
+  const handleAddClient = async (formData: ClientFormData) => {
+    try {
+      setIsSubmitting(true);
+      setError('');
+      const newClient = await clientService.createClient(formData);
+      setClients(prev => [...prev, newClient]);
+      setFilteredClients(prev => [...prev, newClient]);
+      setShowAddModal(false);
+      setSuccess('Client created successfully!');
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create client');
+      console.error('Error creating client:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleUpdateClient = async (formData: ClientFormData) => {
     if (!editingClient) return;
 
     try {
       setIsSubmitting(true);
+      setError('');
       const updatedClient = await clientService.updateClient(editingClient.id, formData);
       setClients(prev => prev.map(c => (c.id === editingClient.id ? updatedClient : c)));
       setFilteredClients(prev => prev.map(c => (c.id === editingClient.id ? updatedClient : c)));
@@ -102,7 +123,7 @@ export const Clients: React.FC = () => {
       setSuccess('Client updated successfully!');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError('Failed to update client');
+      setError(err instanceof Error ? err.message : 'Failed to update client');
       console.error('Error updating client:', err);
     } finally {
       setIsSubmitting(false);
@@ -490,8 +511,66 @@ export const Clients: React.FC = () => {
         data={filteredClients}
         title="Client Management"
         loading={loading}
+        onAdd={() => setShowAddModal(true)}
         filterComponent={filterComponent}
       />
+
+      {/* Add Client Modal */}
+      <Modal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        title="Add New Client"
+        size="xl"
+      >
+        <ClientForm
+          onSubmit={handleAddClient}
+          onCancel={() => setShowAddModal(false)}
+          isSubmitting={isSubmitting}
+        />
+      </Modal>
+
+      {/* Edit Client Modal */}
+      <Modal
+        isOpen={!!editingClient}
+        onClose={() => setEditingClient(null)}
+        title="Edit Client"
+        size="xl"
+      >
+        {editingClient && (
+          <ClientForm
+            onSubmit={handleUpdateClient}
+            onCancel={() => setEditingClient(null)}
+            initialData={{
+              firstName: editingClient.firstName,
+              lastName: editingClient.lastName,
+              aadhaarNumber: editingClient.aadhaarNumber,
+              voterCardNumber: editingClient.voterCardNumber,
+              kycType: editingClient.kycType,
+              kycId: editingClient.kycId,
+              cycle: editingClient.cycle,
+              dateOfBirth: editingClient.dateOfBirth,
+              fatherName: editingClient.fatherName,
+              motherName: editingClient.motherName,
+              gender: editingClient.gender,
+              maritalStatus: editingClient.maritalStatus,
+              mobileNumber: editingClient.mobileNumber,
+              status: editingClient.status,
+              qualification: editingClient.qualification,
+              language: editingClient.language,
+              caste: editingClient.caste,
+              religion: editingClient.religion,
+              occupation: editingClient.occupation,
+              landHolding: editingClient.landHolding,
+              monthlyIncome: editingClient.monthlyIncome,
+              annualIncome: editingClient.annualIncome,
+              householdIncome: editingClient.householdIncome,
+              monthlyExpense: editingClient.monthlyExpense,
+              monthlyObligation: editingClient.monthlyObligation,
+            }}
+            isSubmitting={isSubmitting}
+          />
+        )}
+      </Modal>
 
       {/* CSV Upload Modal */}
       <Modal

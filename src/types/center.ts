@@ -57,6 +57,12 @@ export interface CenterFormData {
   parentCenterId?: string;
 }
 
+export interface BranchOption {
+  id: string;
+  name: string;
+  code?: string;
+}
+
 export interface CenterFilterOptions {
   branch?: string;
   center?: string;

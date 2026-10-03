@@ -22,12 +22,14 @@ interface InsuranceFormProps {
   onSubmit: (data: InsuranceFormData) => void;
   onCancel: () => void;
   initialData?: Partial<InsuranceFormData>;
+  isSubmitting?: boolean;
 }
 
 export const InsuranceForm: React.FC<InsuranceFormProps> = ({
   onSubmit,
   onCancel,
-  initialData = {}
+  initialData = {},
+  isSubmitting = false
 }) => {
   const [formData, setFormData] = useState<InsuranceFormData>({
     insuranceCode: initialData.insuranceCode || '',
@@ -46,14 +48,14 @@ export const InsuranceForm: React.FC<InsuranceFormProps> = ({
     writeOffInsuranceHead: initialData.writeOffInsuranceHead || '',
   });
 
-  const [errors, setErrors] = useState<Partial<InsuranceFormData>>({});
+  const [errors, setErrors] = useState<Partial<Record<keyof InsuranceFormData, string>>>({});
 
   const insuranceTypes = ['Life Insurance', 'Health Insurance', 'Term Insurance', 'Accident Insurance', 'Disability Insurance'];
   const premiumCalTypes = ['Percentage', 'Fixed'];
   const paymentFrequencies = ['Monthly', 'Quarterly', 'Half-Yearly', 'Annual'];
 
   const validateForm = (): boolean => {
-    const newErrors: Partial<InsuranceFormData> = {};
+    const newErrors: Partial<Record<keyof InsuranceFormData, string>> = {};
 
     if (!formData.insuranceCode) newErrors.insuranceCode = 'Insurance code is required';
     if (!formData.insuranceType) newErrors.insuranceType = 'Insurance type is required';
@@ -352,15 +354,17 @@ export const InsuranceForm: React.FC<InsuranceFormProps> = ({
         <button
           type="button"
           onClick={onCancel}
+          disabled={isSubmitting}
           className="px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200"
         >
           Cancel
         </button>
         <button
           type="submit"
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
+          disabled={isSubmitting}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
         >
-          Save Insurance
+          {isSubmitting ? 'Saving...' : 'Save Insurance'}
         </button>
       </div>
     </form>

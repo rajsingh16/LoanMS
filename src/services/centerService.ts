@@ -145,7 +145,7 @@ class CenterService {
       };
     } catch (error) {
       console.error('Error creating center:', error);
-      throw new Error('Failed to create center');
+      throw error instanceof Error ? error : new Error('Failed to create center');
     }
   }
 
@@ -231,7 +231,7 @@ class CenterService {
       };
     } catch (error) {
       console.error('Error updating center:', error);
-      throw new Error('Failed to update center');
+      throw error instanceof Error ? error : new Error('Failed to update center');
     }
   }
 
@@ -316,6 +316,53 @@ class CenterService {
     const a = document.createElement('a');
     a.href = url;
     a.download = `centers_export_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  }
+
+  async uploadCentersCSV(
+    file: File
+  ): Promise<{ success: boolean; created: number; updated: number; errors: number; message?: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await apiFetch('/api/centers/upload-csv', { method: 'POST', body: formData });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || json.error?.message || 'CSV upload failed');
+    return json;
+  }
+
+  async downloadTemplate(): Promise<void> {
+    const headers = [
+      'branchId',
+      'centerName',
+      'centerDay',
+      'centerTime',
+      'assignedTo',
+      'contactPersonName',
+      'contactPersonNumber',
+      'address1',
+      'address2',
+      'landmark',
+      'villageId',
+      'pincode',
+      'city',
+      'district',
+      'state',
+      'meetingPlace',
+      'latitude',
+      'longitude',
+      'status',
+      'blacklisted',
+      'bcCenterId',
+      'parentCenterId',
+    ];
+    const blob = new Blob([headers.join(',')], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'centers_template.csv';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

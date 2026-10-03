@@ -1,7 +1,13 @@
 import { LoanProduct, ProductFilterOptions } from '../types/product';
 import { apiFetch } from '../lib/api';
 
-export type ProductFormData = Omit<LoanProduct, 'id' | 'insertedOn' | 'insertedBy' | 'updatedOn' | 'updatedBy'>;
+export type ProductFormData = Omit<
+  LoanProduct,
+  'id' | 'productId' | 'status' | 'insertedOn' | 'insertedBy' | 'updatedOn' | 'updatedBy'
+> & {
+  productId?: string;
+  status?: LoanProduct['status'];
+};
 
 const BASE_URL = '/api/products';
 

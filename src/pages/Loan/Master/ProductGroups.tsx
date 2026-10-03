@@ -6,7 +6,7 @@ import { CSVUpload } from '../../../components/Common/CSVUpload';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
 import { DataTable } from '../../../components/Common/DataTable';
 import { ProductGroup, ProductGroupFilterOptions } from '../../../types/product';
-import { productGroupService, ProductGroupFormData } from '../../../services/productgroupService';
+import { productGroupService, ProductGroupFormData } from '../../../services/productGroupService';
 import { useAuth } from '../../../hooks/useAuth';
 import {
   Package, Calendar, Edit, Trash2, CheckCircle, XCircle,

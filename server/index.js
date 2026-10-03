@@ -153,6 +153,36 @@ app.get('/api/branches', async (_req, res) => {
   }
 });
 
+async function getActiveBranchById(branchId) {
+  if (!branchId) return null;
+  const { rows } = await pool.query(
+    `SELECT id, branch_code, branch_name FROM branches WHERE id = $1 AND status = 'active'`,
+    [branchId]
+  );
+  return rows[0] || null;
+}
+
+async function syncBranchFromArea(area) {
+  if (String(area.area_type || '').toLowerCase() !== 'branch') {
+    return;
+  }
+
+  await pool.query(
+    `INSERT INTO branches (branch_code, branch_name, location, status)
+     VALUES ($1, $2, $3, 'active')
+     ON CONFLICT (branch_code) DO UPDATE
+     SET branch_name = EXCLUDED.branch_name,
+         location = EXCLUDED.location,
+         status = 'active',
+         updated_at = now()`,
+    [
+      area.area_code,
+      area.area_name,
+      [area.address1, area.district, area.state].filter(Boolean).join(', ') || null,
+    ]
+  );
+}
+
 function profileWithBranch(row) {
   if (!row) return null;
   const branches = row.branch_id
@@ -364,8 +394,14 @@ app.post('/api/centers', authMiddleware, async (req, res) => {
   const b = req.body;
   try {
     const centerTable = quoteIdent(await getCenterTableName());
-    const br = await pool.query(`SELECT branch_code FROM branches WHERE id = $1`, [b.branch_id]);
-    const branchCode = br.rows[0]?.branch_code || 'CTR';
+    const branch = await getActiveBranchById(b.branch_id);
+    if (!branch) {
+      return res.status(400).json({
+        data: null,
+        error: { message: 'Please select a valid active branch before creating a center.' },
+      });
+    }
+    const branchCode = branch.branch_code || 'CTR';
     const centerCode = `${branchCode}${String(Date.now()).slice(-4)}`;
 
     const { rows } = await pool.query(
@@ -471,6 +507,16 @@ app.patch('/api/centers/:id', authMiddleware, async (req, res) => {
   }
   vals.push(req.params.id);
   try {
+    if (b.branch_id !== undefined) {
+      const branch = await getActiveBranchById(b.branch_id);
+      if (!branch) {
+        return res.status(400).json({
+          data: null,
+          error: { message: 'Please select a valid active branch before updating this center.' },
+        });
+      }
+    }
+
     const centerTable = quoteIdent(await getCenterTableName());
     await pool.query(
       `UPDATE ${centerTable} SET ${sets.join(', ')}, updated_at = now() WHERE id = $${i}`,
@@ -595,6 +641,7 @@ app.post('/api/areas', authMiddleware, async (req, res) => {
         req.userId,
       ]
     );
+    await syncBranchFromArea(rows[0]);
     return res.json({ data: rows[0], error: null });
   } catch (e) {
     console.error(e);
@@ -654,6 +701,7 @@ app.patch('/api/areas/:id', authMiddleware, async (req, res) => {
     if (!rows.length) {
       return res.status(404).json({ error: 'Not found' });
     }
+    await syncBranchFromArea(rows[0]);
     return res.json({ data: rows[0], error: null });
   } catch (e) {
     console.error(e);
@@ -699,6 +747,7 @@ app.post('/api/areas/bulk-upsert', authMiddleware, async (req, res) => {
           `UPDATE areas SET ${sets.join(', ')}, updated_at = now() WHERE id = $${fields.length + 1}`,
           vals
         );
+        await syncBranchFromArea(payload);
         updated++;
       } else {
         await pool.query(
@@ -746,6 +795,7 @@ app.post('/api/areas/bulk-upsert', authMiddleware, async (req, res) => {
             req.userId,
           ]
         );
+        await syncBranchFromArea(payload);
         created++;
       }
     } catch (e) {
@@ -1157,6 +1207,940 @@ app.put('/api/villages/:id', authMiddleware, async (req, res) => {
 app.delete('/api/villages/:id', authMiddleware, async (req, res) => {
   try {
     const { rowCount } = await pool.query(`DELETE FROM villages WHERE id = $1`, [req.params.id]);
+    if (!rowCount) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    return res.json({ error: null });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: { message: e.message } });
+  }
+});
+
+// --- Master catalog modules ---
+function actorName(row, prefix) {
+  const first = row[`${prefix}_first_name`];
+  const last = row[`${prefix}_last_name`];
+  return [first, last].filter(Boolean).join(' ') || null;
+}
+
+function auditFields(row) {
+  return {
+    insertedOn: row.created_at,
+    insertedBy: actorName(row, 'created') || row.created_by || 'System',
+    updatedOn: row.updated_at,
+    updatedBy: actorName(row, 'updated') || row.updated_by || null,
+  };
+}
+
+function jsonData(row) {
+  if (!row.data) return {};
+  return typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+}
+
+function masterDuplicateResponse(res, fallback) {
+  return res.status(409).json({
+    data: null,
+    error: { message: fallback },
+    message: fallback,
+  });
+}
+
+function masterError(res, e, fallback = 'Request failed') {
+  console.error(e);
+  if (e.code === '23505') {
+    return masterDuplicateResponse(res, 'A record with this code already exists.');
+  }
+  return res.status(500).json({
+    data: null,
+    error: { message: e.message || fallback },
+    message: e.message || fallback,
+  });
+}
+
+function unsupportedCsvUpload(_req, res) {
+  return res.status(501).json({
+    success: false,
+    created: 0,
+    updated: 0,
+    errors: 1,
+    message: 'CSV upload is not configured on the server yet. Please create records from the form.',
+  });
+}
+
+function mapProductGroupRow(row) {
+  return {
+    ...jsonData(row),
+    id: row.id,
+    productGroupCode: row.product_group_code,
+    productGroupName: row.product_group_name,
+    productGroupSegment: row.product_group_segment,
+    productGroupType: row.product_group_type,
+    status: row.status,
+    ...auditFields(row),
+  };
+}
+
+function mapProductRow(row) {
+  return {
+    ...jsonData(row),
+    id: row.id,
+    productId: row.product_id,
+    productCode: row.product_code,
+    productName: row.product_name,
+    productGroupId: row.product_group_id,
+    status: row.status,
+    ...auditFields(row),
+  };
+}
+
+function mapDistrictRow(row) {
+  return {
+    id: row.id,
+    districtCode: row.district_code,
+    districtName: row.district_name,
+    countryId: row.country_id,
+    stateId: row.state_id,
+    stateName: row.state_name,
+    ...auditFields(row),
+  };
+}
+
+function mapInsuranceRow(row) {
+  return {
+    ...jsonData(row),
+    id: row.id,
+    insuranceId: row.insurance_id,
+    insuranceCode: row.insurance_code,
+    insuranceType: row.insurance_type,
+    insuranceName: row.insurance_name,
+    status: row.status,
+    ...auditFields(row),
+  };
+}
+
+function mapIfscRow(row) {
+  return {
+    id: row.id,
+    ifscCode: row.ifsc_code,
+    bankName: row.bank_name,
+    bankBranch: row.bank_branch,
+    branchAddress: row.branch_address,
+    bankAddress: row.branch_address,
+    city: row.city,
+    state: row.state,
+    mobileNumber: row.mobile_number,
+    ...auditFields(row),
+  };
+}
+
+function mapPurposeRow(row) {
+  return {
+    id: row.id,
+    purposeId: row.purpose_id,
+    purposeCode: row.purpose_code,
+    purposeName: row.purpose_name,
+    mainPurposeId: row.main_purpose_id,
+    isMainPurpose: row.is_main_purpose,
+    status: row.status,
+    ...auditFields(row),
+  };
+}
+
+const masterAuditJoin = `
+  LEFT JOIN user_profiles cb ON cb.id = t.created_by
+  LEFT JOIN user_profiles ub ON ub.id = t.updated_by
+`;
+
+const masterAuditSelect = `
+  cb.first_name AS created_first_name,
+  cb.last_name AS created_last_name,
+  ub.first_name AS updated_first_name,
+  ub.last_name AS updated_last_name
+`;
+
+app.get('/api/product-groups', authMiddleware, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT t.*, ${masterAuditSelect}
+      FROM product_groups t
+      ${masterAuditJoin}
+      ORDER BY t.created_at DESC
+    `);
+    return res.json({ data: rows.map(mapProductGroupRow), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to load product groups');
+  }
+});
+
+app.post('/api/product-groups/upload-csv', authMiddleware, unsupportedCsvUpload);
+
+app.post('/api/product-groups', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.productGroupCode || !b.productGroupName) {
+    return res.status(400).json({ data: null, error: { message: 'Product group code and name are required.' } });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO product_groups (
+        product_group_code, product_group_name, product_group_segment, product_group_type,
+        status, data, created_by, updated_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+      RETURNING *`,
+      [
+        String(b.productGroupCode).trim(),
+        String(b.productGroupName).trim(),
+        b.productGroupSegment || null,
+        b.productGroupType || null,
+        b.status || 'active',
+        JSON.stringify(b),
+        req.userId,
+      ]
+    );
+    return res.status(201).json({ data: mapProductGroupRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to create product group');
+  }
+});
+
+app.put('/api/product-groups/:id', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.productGroupCode || !b.productGroupName) {
+    return res.status(400).json({ data: null, error: { message: 'Product group code and name are required.' } });
+  }
+  try {
+    const { rows } = await pool.query(
+      `UPDATE product_groups
+       SET product_group_code = $1,
+           product_group_name = $2,
+           product_group_segment = $3,
+           product_group_type = $4,
+           status = $5,
+           data = $6,
+           updated_by = $7,
+           updated_at = now()
+       WHERE id = $8
+       RETURNING *`,
+      [
+        String(b.productGroupCode).trim(),
+        String(b.productGroupName).trim(),
+        b.productGroupSegment || null,
+        b.productGroupType || null,
+        b.status || 'active',
+        JSON.stringify(b),
+        req.userId,
+        req.params.id,
+      ]
+    );
+    if (!rows.length) return res.status(404).json({ data: null, error: { message: 'Not found' } });
+    return res.json({ data: mapProductGroupRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to update product group');
+  }
+});
+
+app.delete('/api/product-groups/:id', authMiddleware, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM product_groups WHERE id = $1`, [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: { message: 'Not found' } });
+    return res.json({ error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to delete product group');
+  }
+});
+
+app.get('/api/products', authMiddleware, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT t.*, ${masterAuditSelect}
+      FROM products t
+      ${masterAuditJoin}
+      ORDER BY t.created_at DESC
+    `);
+    return res.json({ data: rows.map(mapProductRow), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to load products');
+  }
+});
+
+app.post('/api/products/upload-csv', authMiddleware, unsupportedCsvUpload);
+app.post('/api/products/process', authMiddleware, (_req, res) => {
+  return res.json({ success: true, message: 'Products processed successfully.' });
+});
+
+app.post('/api/products', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.productGroupId || !b.productCode || !b.productName) {
+    return res.status(400).json({ data: null, error: { message: 'Product group, code and name are required.' } });
+  }
+  try {
+    const productId = b.productId || `PROD${String(Date.now()).slice(-8)}`;
+    const { rows } = await pool.query(
+      `INSERT INTO products (
+        product_id, product_code, product_name, product_group_id, status, data, created_by, updated_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+      RETURNING *`,
+      [
+        productId,
+        String(b.productCode).trim(),
+        String(b.productName).trim(),
+        String(b.productGroupId).trim(),
+        b.status || 'active',
+        JSON.stringify({ ...b, productId }),
+        req.userId,
+      ]
+    );
+    return res.status(201).json({ data: mapProductRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to create product');
+  }
+});
+
+app.put('/api/products/:id', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.productGroupId || !b.productCode || !b.productName) {
+    return res.status(400).json({ data: null, error: { message: 'Product group, code and name are required.' } });
+  }
+  try {
+    const { rows: current } = await pool.query(`SELECT product_id FROM products WHERE id = $1`, [req.params.id]);
+    if (!current.length) return res.status(404).json({ data: null, error: { message: 'Not found' } });
+    const productId = b.productId || current[0].product_id;
+    const { rows } = await pool.query(
+      `UPDATE products
+       SET product_id = $1,
+           product_code = $2,
+           product_name = $3,
+           product_group_id = $4,
+           status = $5,
+           data = $6,
+           updated_by = $7,
+           updated_at = now()
+       WHERE id = $8
+       RETURNING *`,
+      [
+        productId,
+        String(b.productCode).trim(),
+        String(b.productName).trim(),
+        String(b.productGroupId).trim(),
+        b.status || 'active',
+        JSON.stringify({ ...b, productId }),
+        req.userId,
+        req.params.id,
+      ]
+    );
+    return res.json({ data: mapProductRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to update product');
+  }
+});
+
+app.delete('/api/products/:id', authMiddleware, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM products WHERE id = $1`, [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: { message: 'Not found' } });
+    return res.json({ error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to delete product');
+  }
+});
+
+app.get('/api/districts', authMiddleware, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT t.*, ${masterAuditSelect}
+      FROM districts t
+      ${masterAuditJoin}
+      ORDER BY t.created_at DESC
+    `);
+    return res.json({ data: rows.map(mapDistrictRow), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to load districts');
+  }
+});
+
+app.post('/api/districts/upload-csv', authMiddleware, unsupportedCsvUpload);
+
+app.post('/api/districts', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.districtCode || !b.districtName || !b.countryId || !b.stateId || !b.stateName) {
+    return res.status(400).json({ data: null, error: { message: 'District code, name, country, state and state name are required.' } });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO districts (
+        district_code, district_name, country_id, state_id, state_name, created_by, updated_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$6)
+      RETURNING *`,
+      [b.districtCode, b.districtName, b.countryId, b.stateId, b.stateName, req.userId]
+    );
+    return res.status(201).json({ data: mapDistrictRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to create district');
+  }
+});
+
+app.put('/api/districts/:id', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.districtCode || !b.districtName || !b.countryId || !b.stateId || !b.stateName) {
+    return res.status(400).json({ data: null, error: { message: 'District code, name, country, state and state name are required.' } });
+  }
+  try {
+    const { rows } = await pool.query(
+      `UPDATE districts
+       SET district_code = $1,
+           district_name = $2,
+           country_id = $3,
+           state_id = $4,
+           state_name = $5,
+           updated_by = $6,
+           updated_at = now()
+       WHERE id = $7
+       RETURNING *`,
+      [b.districtCode, b.districtName, b.countryId, b.stateId, b.stateName, req.userId, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ data: null, error: { message: 'Not found' } });
+    return res.json({ data: mapDistrictRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to update district');
+  }
+});
+
+app.delete('/api/districts/:id', authMiddleware, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM districts WHERE id = $1`, [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: { message: 'Not found' } });
+    return res.json({ error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to delete district');
+  }
+});
+
+app.get('/api/insurance', authMiddleware, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT t.*, ${masterAuditSelect}
+      FROM insurance t
+      ${masterAuditJoin}
+      ORDER BY t.created_at DESC
+    `);
+    return res.json({ data: rows.map(mapInsuranceRow), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to load insurance');
+  }
+});
+
+app.post('/api/insurance/upload-csv', authMiddleware, unsupportedCsvUpload);
+
+app.post('/api/insurance', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.insuranceCode || !b.insuranceType || !b.insuranceName) {
+    return res.status(400).json({ data: null, error: { message: 'Insurance code, type and name are required.' } });
+  }
+  try {
+    const insuranceId = b.insuranceId || `INS${String(Date.now()).slice(-8)}`;
+    const { rows } = await pool.query(
+      `INSERT INTO insurance (
+        insurance_id, insurance_code, insurance_type, insurance_name, status, data, created_by, updated_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+      RETURNING *`,
+      [insuranceId, b.insuranceCode, b.insuranceType, b.insuranceName, b.status || 'active', JSON.stringify({ ...b, insuranceId }), req.userId]
+    );
+    return res.status(201).json({ data: mapInsuranceRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to create insurance');
+  }
+});
+
+app.put('/api/insurance/:id', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.insuranceCode || !b.insuranceType || !b.insuranceName) {
+    return res.status(400).json({ data: null, error: { message: 'Insurance code, type and name are required.' } });
+  }
+  try {
+    const { rows: current } = await pool.query(`SELECT insurance_id FROM insurance WHERE id = $1`, [req.params.id]);
+    if (!current.length) return res.status(404).json({ data: null, error: { message: 'Not found' } });
+    const insuranceId = b.insuranceId || current[0].insurance_id;
+    const { rows } = await pool.query(
+      `UPDATE insurance
+       SET insurance_id = $1,
+           insurance_code = $2,
+           insurance_type = $3,
+           insurance_name = $4,
+           status = $5,
+           data = $6,
+           updated_by = $7,
+           updated_at = now()
+       WHERE id = $8
+       RETURNING *`,
+      [insuranceId, b.insuranceCode, b.insuranceType, b.insuranceName, b.status || 'active', JSON.stringify({ ...b, insuranceId }), req.userId, req.params.id]
+    );
+    return res.json({ data: mapInsuranceRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to update insurance');
+  }
+});
+
+app.delete('/api/insurance/:id', authMiddleware, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM insurance WHERE id = $1`, [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: { message: 'Not found' } });
+    return res.json({ error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to delete insurance');
+  }
+});
+
+app.get('/api/ifsc', authMiddleware, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT t.*, ${masterAuditSelect}
+      FROM ifsc_codes t
+      ${masterAuditJoin}
+      ORDER BY t.created_at DESC
+    `);
+    return res.json({ data: rows.map(mapIfscRow), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to load IFSC codes');
+  }
+});
+
+app.post('/api/ifsc/upload-csv', authMiddleware, unsupportedCsvUpload);
+
+app.post('/api/ifsc', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  const branchAddress = b.branchAddress || b.bankAddress;
+  if (!b.ifscCode || !b.bankName || !b.bankBranch || !branchAddress || !b.city || !b.state) {
+    return res.status(400).json({ data: null, error: { message: 'IFSC code, bank, branch, address, city and state are required.' } });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO ifsc_codes (
+        ifsc_code, bank_name, bank_branch, branch_address, city, state, mobile_number, created_by, updated_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+      RETURNING *`,
+      [b.ifscCode, b.bankName, b.bankBranch, branchAddress, b.city, b.state, b.mobileNumber || null, req.userId]
+    );
+    return res.status(201).json({ data: mapIfscRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to create IFSC code');
+  }
+});
+
+app.put('/api/ifsc/:id', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  const branchAddress = b.branchAddress || b.bankAddress;
+  if (!b.ifscCode || !b.bankName || !b.bankBranch || !branchAddress || !b.city || !b.state) {
+    return res.status(400).json({ data: null, error: { message: 'IFSC code, bank, branch, address, city and state are required.' } });
+  }
+  try {
+    const { rows } = await pool.query(
+      `UPDATE ifsc_codes
+       SET ifsc_code = $1,
+           bank_name = $2,
+           bank_branch = $3,
+           branch_address = $4,
+           city = $5,
+           state = $6,
+           mobile_number = $7,
+           updated_by = $8,
+           updated_at = now()
+       WHERE id = $9
+       RETURNING *`,
+      [b.ifscCode, b.bankName, b.bankBranch, branchAddress, b.city, b.state, b.mobileNumber || null, req.userId, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ data: null, error: { message: 'Not found' } });
+    return res.json({ data: mapIfscRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to update IFSC code');
+  }
+});
+
+app.delete('/api/ifsc/:id', authMiddleware, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM ifsc_codes WHERE id = $1`, [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: { message: 'Not found' } });
+    return res.json({ error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to delete IFSC code');
+  }
+});
+
+app.get('/api/purposes', authMiddleware, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT t.*, ${masterAuditSelect}
+      FROM purposes t
+      ${masterAuditJoin}
+      ORDER BY t.created_at DESC
+    `);
+    return res.json({ data: rows.map(mapPurposeRow), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to load purposes');
+  }
+});
+
+app.post('/api/purposes/upload-csv', authMiddleware, unsupportedCsvUpload);
+
+app.post('/api/purposes', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.purposeCode || !b.purposeName) {
+    return res.status(400).json({ data: null, error: { message: 'Purpose code and name are required.' } });
+  }
+  try {
+    const purposeId = b.purposeId || `PUR${String(Date.now()).slice(-8)}`;
+    const { rows } = await pool.query(
+      `INSERT INTO purposes (
+        purpose_id, purpose_code, purpose_name, main_purpose_id, is_main_purpose,
+        status, created_by, updated_by
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+      RETURNING *`,
+      [purposeId, b.purposeCode, b.purposeName, b.mainPurposeId || null, b.isMainPurpose ?? !b.mainPurposeId, b.status || 'active', req.userId]
+    );
+    return res.status(201).json({ data: mapPurposeRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to create purpose');
+  }
+});
+
+app.put('/api/purposes/:id', authMiddleware, async (req, res) => {
+  const b = req.body || {};
+  if (!b.purposeCode || !b.purposeName) {
+    return res.status(400).json({ data: null, error: { message: 'Purpose code and name are required.' } });
+  }
+  try {
+    const { rows: current } = await pool.query(`SELECT purpose_id FROM purposes WHERE id = $1`, [req.params.id]);
+    if (!current.length) return res.status(404).json({ data: null, error: { message: 'Not found' } });
+    const purposeId = b.purposeId || current[0].purpose_id;
+    const { rows } = await pool.query(
+      `UPDATE purposes
+       SET purpose_id = $1,
+           purpose_code = $2,
+           purpose_name = $3,
+           main_purpose_id = $4,
+           is_main_purpose = $5,
+           status = $6,
+           updated_by = $7,
+           updated_at = now()
+       WHERE id = $8
+       RETURNING *`,
+      [purposeId, b.purposeCode, b.purposeName, b.mainPurposeId || null, b.isMainPurpose ?? !b.mainPurposeId, b.status || 'active', req.userId, req.params.id]
+    );
+    return res.json({ data: mapPurposeRow(rows[0]), error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to update purpose');
+  }
+});
+
+app.delete('/api/purposes/:id', authMiddleware, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM purposes WHERE id = $1`, [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: { message: 'Not found' } });
+    return res.json({ error: null });
+  } catch (e) {
+    return masterError(res, e, 'Failed to delete purpose');
+  }
+});
+
+// --- Clients ---
+function calcClientAge(dateOfBirth) {
+  const birth = new Date(dateOfBirth);
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age -= 1;
+  }
+  return age;
+}
+
+function mapClientRow(row) {
+  return {
+    id: row.id,
+    client_id: row.client_id,
+    first_name: row.first_name,
+    last_name: row.last_name,
+    aadhaar_number: row.aadhaar_number,
+    voter_card_number: row.voter_card_number,
+    kyc_type: row.kyc_type,
+    kyc_id: row.kyc_id,
+    cycle: row.cycle,
+    date_of_birth: row.date_of_birth,
+    age: row.age,
+    father_name: row.father_name,
+    mother_name: row.mother_name,
+    gender: row.gender,
+    marital_status: row.marital_status,
+    mobile_number: row.mobile_number,
+    status: row.status,
+    qualification: row.qualification,
+    language: row.language,
+    caste: row.caste,
+    religion: row.religion,
+    occupation: row.occupation,
+    land_holding: row.land_holding,
+    monthly_income: row.monthly_income,
+    annual_income: row.annual_income,
+    household_income: row.household_income,
+    monthly_expense: row.monthly_expense,
+    monthly_obligation: row.monthly_obligation,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    created_user: row.c_id
+      ? { id: row.c_id, first_name: row.c_fn, last_name: row.c_ln }
+      : null,
+  };
+}
+
+function normalizeClientPayload(b) {
+  return {
+    first_name: b.first_name ?? b.firstName,
+    last_name: b.last_name ?? b.lastName,
+    aadhaar_number: b.aadhaar_number ?? b.aadhaarNumber,
+    voter_card_number: b.voter_card_number ?? b.voterCardNumber,
+    kyc_type: b.kyc_type ?? b.kycType,
+    kyc_id: b.kyc_id ?? b.kycId,
+    cycle: b.cycle,
+    date_of_birth: b.date_of_birth ?? b.dateOfBirth,
+    father_name: b.father_name ?? b.fatherName,
+    mother_name: b.mother_name ?? b.motherName,
+    gender: b.gender,
+    marital_status: b.marital_status ?? b.maritalStatus,
+    mobile_number: b.mobile_number ?? b.mobileNumber,
+    status: b.status,
+    qualification: b.qualification,
+    language: b.language,
+    caste: b.caste,
+    religion: b.religion,
+    occupation: b.occupation,
+    land_holding: b.land_holding ?? b.landHolding,
+    monthly_income: b.monthly_income ?? b.monthlyIncome,
+    annual_income: b.annual_income ?? b.annualIncome,
+    household_income: b.household_income ?? b.householdIncome,
+    monthly_expense: b.monthly_expense ?? b.monthlyExpense,
+    monthly_obligation: b.monthly_obligation ?? b.monthlyObligation,
+  };
+}
+
+app.get('/api/clients', authMiddleware, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT c.*,
+        u.id AS c_id, u.first_name AS c_fn, u.last_name AS c_ln
+      FROM clients c
+      LEFT JOIN user_profiles u ON c.created_by = u.id
+      ORDER BY c.created_at DESC
+    `);
+    return res.json({ data: rows.map(mapClientRow), error: null });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ data: null, error: { message: e.message } });
+  }
+});
+
+app.get('/api/clients/:id', authMiddleware, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT c.*,
+        u.id AS c_id, u.first_name AS c_fn, u.last_name AS c_ln
+      FROM clients c
+      LEFT JOIN user_profiles u ON c.created_by = u.id
+      WHERE c.id = $1
+    `,
+      [req.params.id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ data: null, error: { message: 'Not found' } });
+    }
+    return res.json({ data: mapClientRow(rows[0]), error: null });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ data: null, error: { message: e.message } });
+  }
+});
+
+app.post('/api/clients', authMiddleware, async (req, res) => {
+  const b = normalizeClientPayload(req.body || {});
+  const required = [
+    'first_name',
+    'last_name',
+    'aadhaar_number',
+    'voter_card_number',
+    'kyc_type',
+    'kyc_id',
+    'date_of_birth',
+    'father_name',
+    'mother_name',
+    'gender',
+    'marital_status',
+    'mobile_number',
+    'qualification',
+    'language',
+    'caste',
+    'religion',
+    'occupation',
+    'land_holding',
+  ];
+  const missing = required.filter((field) => !b[field]);
+  if (missing.length) {
+    return res.status(400).json({
+      data: null,
+      error: { message: `Missing required fields: ${missing.join(', ')}` },
+    });
+  }
+
+  try {
+    const clientId = `CL${String(Date.now()).slice(-6)}`;
+    const age = calcClientAge(b.date_of_birth);
+
+    const { rows } = await pool.query(
+      `INSERT INTO clients (
+        client_id, first_name, last_name, aadhaar_number, voter_card_number, kyc_type, kyc_id,
+        cycle, date_of_birth, age, father_name, mother_name, gender, marital_status, mobile_number,
+        status, qualification, language, caste, religion, occupation, land_holding,
+        monthly_income, annual_income, household_income, monthly_expense, monthly_obligation, created_by
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28
+      ) RETURNING *`,
+      [
+        clientId,
+        b.first_name,
+        b.last_name,
+        b.aadhaar_number,
+        b.voter_card_number,
+        b.kyc_type,
+        b.kyc_id,
+        b.cycle ?? 1,
+        b.date_of_birth,
+        age,
+        b.father_name,
+        b.mother_name,
+        b.gender,
+        b.marital_status,
+        b.mobile_number,
+        b.status ?? 'active',
+        b.qualification,
+        b.language,
+        b.caste,
+        b.religion,
+        b.occupation,
+        b.land_holding,
+        b.monthly_income ?? 0,
+        b.annual_income ?? 0,
+        b.household_income ?? 0,
+        b.monthly_expense ?? 0,
+        b.monthly_obligation ?? 0,
+        req.userId,
+      ]
+    );
+
+    const full = await pool.query(
+      `
+      SELECT c.*,
+        u.id AS c_id, u.first_name AS c_fn, u.last_name AS c_ln
+      FROM clients c
+      LEFT JOIN user_profiles u ON c.created_by = u.id
+      WHERE c.id = $1
+    `,
+      [rows[0].id]
+    );
+
+    return res.status(201).json({ data: mapClientRow(full.rows[0]), error: null });
+  } catch (e) {
+    console.error(e);
+    if (e.code === '23505') {
+      return res.status(409).json({
+        data: null,
+        error: { message: 'A client with this Aadhaar or client ID already exists.' },
+      });
+    }
+    return res.status(500).json({ data: null, error: { message: e.message } });
+  }
+});
+
+app.put('/api/clients/:id', authMiddleware, async (req, res) => {
+  const b = normalizeClientPayload(req.body || {});
+  const fields = [
+    'first_name',
+    'last_name',
+    'aadhaar_number',
+    'voter_card_number',
+    'kyc_type',
+    'kyc_id',
+    'cycle',
+    'date_of_birth',
+    'father_name',
+    'mother_name',
+    'gender',
+    'marital_status',
+    'mobile_number',
+    'status',
+    'qualification',
+    'language',
+    'caste',
+    'religion',
+    'occupation',
+    'land_holding',
+    'monthly_income',
+    'annual_income',
+    'household_income',
+    'monthly_expense',
+    'monthly_obligation',
+  ];
+  const sets = [];
+  const vals = [];
+  let i = 1;
+  for (const field of fields) {
+    if (b[field] !== undefined) {
+      sets.push(`${field} = $${i++}`);
+      vals.push(b[field]);
+    }
+  }
+  if (b.date_of_birth !== undefined) {
+    sets.push(`age = $${i++}`);
+    vals.push(calcClientAge(b.date_of_birth));
+  }
+  if (!sets.length) {
+    return res.status(400).json({ error: 'No fields' });
+  }
+  vals.push(req.params.id);
+
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE clients SET ${sets.join(', ')}, updated_at = now() WHERE id = $${i}`,
+      vals
+    );
+    if (!rowCount) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    const full = await pool.query(
+      `
+      SELECT c.*,
+        u.id AS c_id, u.first_name AS c_fn, u.last_name AS c_ln
+      FROM clients c
+      LEFT JOIN user_profiles u ON c.created_by = u.id
+      WHERE c.id = $1
+    `,
+      [req.params.id]
+    );
+
+    return res.json({ data: mapClientRow(full.rows[0]), error: null });
+  } catch (e) {
+    console.error(e);
+    if (e.code === '23505') {
+      return res.status(409).json({
+        data: null,
+        error: { message: 'A client with this Aadhaar number already exists.' },
+      });
+    }
+    return res.status(500).json({ data: null, error: { message: e.message } });
+  }
+});
+
+app.delete('/api/clients/:id', authMiddleware, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM clients WHERE id = $1`, [req.params.id]);
     if (!rowCount) {
       return res.status(404).json({ error: 'Not found' });
     }

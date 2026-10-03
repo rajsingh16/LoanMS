@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Toggle } from '../Common/Toggle';
 
 interface ProductFormData {
+  productId?: string;
   productGroupId: string;
   productCode: string;
   productName: string;
@@ -50,18 +51,29 @@ interface ProductFormData {
   emiStartSequence: number;
   emiEndSequence: number;
   emiAmount: number;
+  status?: string;
+}
+
+interface ProductGroupOption {
+  id: string;
+  productGroupCode: string;
+  productGroupName: string;
 }
 
 interface ProductFormProps {
   onSubmit: (data: ProductFormData) => void;
   onCancel: () => void;
   initialData?: Partial<ProductFormData>;
+  productGroups?: ProductGroupOption[];
+  isSubmitting?: boolean;
 }
 
 export const ProductForm: React.FC<ProductFormProps> = ({
   onSubmit,
   onCancel,
-  initialData = {}
+  initialData = {},
+  productGroups = [],
+  isSubmitting = false
 }) => {
   const [formData, setFormData] = useState<ProductFormData>({
     productGroupId: initialData.productGroupId || '',
@@ -114,9 +126,8 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     emiAmount: initialData.emiAmount || 0,
   });
 
-  const [errors, setErrors] = useState<Partial<ProductFormData>>({});
+  const [errors, setErrors] = useState<Partial<Record<keyof ProductFormData, string>>>({});
 
-  const productGroups = ['PG001', 'PG002', 'PG003'];
   const calcTypes = ['Percentage', 'Fixed'];
   const deductTypes = ['Upfront', 'Monthly', 'Quarterly', 'Half-Yearly', 'Yearly'];
   const repaymentFrequencies = ['Daily', 'Weekly', 'Fortnightly', 'Monthly', 'Quarterly', 'Half-Yearly', 'Yearly'];
@@ -127,7 +138,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   const healthCareProducts = ['Basic', 'Standard', 'Premium', 'None'];
 
   const validateForm = (): boolean => {
-    const newErrors: Partial<ProductFormData> = {};
+    const newErrors: Partial<Record<keyof ProductFormData, string>> = {};
 
     if (!formData.productGroupId) newErrors.productGroupId = 'Product group ID is required';
     if (!formData.productCode) newErrors.productCode = 'Product code is required';
@@ -200,9 +211,16 @@ export const ProductForm: React.FC<ProductFormProps> = ({
             >
               <option value="">Select Product Group</option>
               {productGroups.map(group => (
-                <option key={group} value={group}>{group}</option>
+                <option key={group.id} value={group.productGroupCode}>
+                  {group.productGroupCode} - {group.productGroupName}
+                </option>
               ))}
             </select>
+            {!productGroups.length && (
+              <p className="text-amber-600 dark:text-amber-400 text-xs mt-1">
+                No product groups available. Please create a product group first.
+              </p>
+            )}
             {errors.productGroupId && <p className="text-red-500 text-xs mt-1">{errors.productGroupId}</p>}
           </div>
 
@@ -859,15 +877,17 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         <button
           type="button"
           onClick={onCancel}
+          disabled={isSubmitting}
           className="px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200"
         >
           Cancel
         </button>
         <button
           type="submit"
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
+          disabled={isSubmitting}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
         >
-          Save Product
+          {isSubmitting ? 'Saving...' : 'Save Product'}
         </button>
       </div>
     </form>

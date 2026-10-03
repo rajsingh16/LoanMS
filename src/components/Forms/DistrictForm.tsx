@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 interface DistrictFormData {
   countryId: string;
   stateId: string;
+  stateName: string;
   districtCode: string;
   districtName: string;
 }
@@ -11,21 +12,24 @@ interface DistrictFormProps {
   onSubmit: (data: DistrictFormData) => void;
   onCancel: () => void;
   initialData?: Partial<DistrictFormData>;
+  isSubmitting?: boolean;
 }
 
 export const DistrictForm: React.FC<DistrictFormProps> = ({
   onSubmit,
   onCancel,
-  initialData = {}
+  initialData = {},
+  isSubmitting = false
 }) => {
   const [formData, setFormData] = useState<DistrictFormData>({
     countryId: initialData.countryId || 'IN',
     stateId: initialData.stateId || '',
+    stateName: initialData.stateName || '',
     districtCode: initialData.districtCode || '',
     districtName: initialData.districtName || '',
   });
 
-  const [errors, setErrors] = useState<Partial<DistrictFormData>>({});
+  const [errors, setErrors] = useState<Partial<Record<keyof DistrictFormData, string>>>({});
 
   const countries = [
     { id: 'IN', name: 'India' },
@@ -45,7 +49,7 @@ export const DistrictForm: React.FC<DistrictFormProps> = ({
   const filteredStates = states.filter(state => state.countryId === formData.countryId);
 
   const validateForm = (): boolean => {
-    const newErrors: Partial<DistrictFormData> = {};
+    const newErrors: Partial<Record<keyof DistrictFormData, string>> = {};
 
     if (!formData.countryId) newErrors.countryId = 'Country is required';
     if (!formData.stateId) newErrors.stateId = 'State is required';
@@ -59,7 +63,8 @@ export const DistrictForm: React.FC<DistrictFormProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (validateForm()) {
-      onSubmit(formData);
+      const state = states.find(item => item.id === formData.stateId);
+      onSubmit({ ...formData, stateName: state?.name || formData.stateName });
     }
   };
 
@@ -68,7 +73,8 @@ export const DistrictForm: React.FC<DistrictFormProps> = ({
       ...prev, 
       [field]: value,
       // Reset state when country changes
-      ...(field === 'countryId' ? { stateId: '' } : {})
+      ...(field === 'countryId' ? { stateId: '', stateName: '' } : {}),
+      ...(field === 'stateId' ? { stateName: states.find(item => item.id === value)?.name || '' } : {})
     }));
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: undefined }));
@@ -160,15 +166,17 @@ export const DistrictForm: React.FC<DistrictFormProps> = ({
         <button
           type="button"
           onClick={onCancel}
+          disabled={isSubmitting}
           className="px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200"
         >
           Cancel
         </button>
         <button
           type="submit"
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
+          disabled={isSubmitting}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
         >
-          Save District
+          {isSubmitting ? 'Saving...' : 'Save District'}
         </button>
       </div>
     </form>
