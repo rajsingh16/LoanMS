@@ -198,8 +198,8 @@ export const DataTable: React.FC<DataTableProps> = ({
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full">
+      <div className="w-full min-w-0 overflow-x-auto overscroll-x-contain">
+        <table className="w-full min-w-max">
           <thead className="bg-gray-50 dark:bg-gray-700">
             <tr>
               {columns.map((column) => (
@@ -246,8 +246,8 @@ export const DataTable: React.FC<DataTableProps> = ({
                   onClick={() => onRowClick && onRowClick(row)}
                 >
                   {columns.map((column) => (
-                    <td key={column.key} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                      {column.render ? column.render(row[column.key], row) : row[column.key]}
+                    <td key={column.key} className="px-6 py-4 align-top text-sm text-gray-900 dark:text-gray-100 break-words">
+                      {column.render ? column.render(row[column.key], row) : String(row[column.key] ?? '')}
                     </td>
                   ))}
                 </tr>

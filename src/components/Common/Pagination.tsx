@@ -24,8 +24,8 @@ export const Pagination: React.FC<PaginationProps> = ({
   const endItem = Math.min(currentPage * pageSize, totalItems);
 
   return (
-    <div className="flex flex-col sm:flex-row items-center justify-between px-4 py-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
-      <div className="flex items-center mb-4 sm:mb-0">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 py-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
+      <div className="flex items-center mb-0">
         <span className="text-sm text-gray-700 dark:text-gray-300">Show</span>
         <select
           value={pageSize}
@@ -39,12 +39,12 @@ export const Pagination: React.FC<PaginationProps> = ({
         <span className="text-sm text-gray-700 dark:text-gray-300">entries</span>
       </div>
       
-      <div className="flex items-center">
-        <span className="text-sm text-gray-700 dark:text-gray-300 mr-4">
+      <div className="flex max-w-full flex-wrap items-center gap-2 sm:justify-end">
+        <span className="text-sm text-gray-700 dark:text-gray-300 sm:mr-2">
           Showing {totalItems > 0 ? startItem : 0} to {endItem} of {totalItems} entries
         </span>
         
-        <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+        <nav className="relative z-0 inline-flex max-w-full overflow-x-auto rounded-md shadow-sm" aria-label="Pagination">
           <button
             onClick={() => onPageChange(Math.max(1, currentPage - 1))}
             disabled={currentPage === 1}

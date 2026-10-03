@@ -18,11 +18,11 @@ export const MainLayout: React.FC = () => {
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
       <Sidebar isOpen={sidebarOpen} onClose={closeSidebar} />
       
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="min-w-0 flex-1 flex flex-col overflow-hidden">
         <Header onMenuClick={toggleSidebar} />
         
         <main className="flex-1 overflow-y-auto">
-          <div className="p-6">
+          <div className="min-w-0 p-4 sm:p-6">
             <Outlet />
           </div>
         </main>
