@@ -41,6 +41,8 @@ export const Centers: React.FC = () => {
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [branchesError, setBranchesError] = useState('');
   const [fieldOfficers, setFieldOfficers] = useState<{ id: string; name: string }[]>([]);
+  const [fieldOfficersLoading, setFieldOfficersLoading] = useState(false);
+  const [fieldOfficersError, setFieldOfficersError] = useState('');
   const [villages, setVillages] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
@@ -89,18 +91,27 @@ export const Centers: React.FC = () => {
 
     try {
       // Load field officers (users with field_officer role)
+      setFieldOfficersLoading(true);
+      setFieldOfficersError('');
       const foRes = await apiFetch('/api/users/by-role/field_officer');
       const foJson = await foRes.json();
-      if (foJson.data) {
+      if (!foRes.ok || foJson.error) {
+        throw new Error(foJson.error?.message || 'Unable to load Field Officers');
+      }
+      if (Array.isArray(foJson.data)) {
         setFieldOfficers(
-          foJson.data.map((user: { id: string; first_name: string; last_name: string }) => ({
+          foJson.data.map((user: { id: string; first_name: string; last_name: string; employee_id?: string }) => ({
             id: user.id,
-            name: `${user.first_name} ${user.last_name}`,
+            name: user.employee_id ? `${user.employee_id} - ${user.first_name} ${user.last_name}` : `${user.first_name} ${user.last_name}`,
           }))
         );
       }
     } catch (err) {
+      setFieldOfficers([]);
+      setFieldOfficersError('Unable to load Field Officers');
       console.error('Error loading field officers:', err);
+    } finally {
+      setFieldOfficersLoading(false);
     }
 
     try {
@@ -549,6 +560,8 @@ export const Centers: React.FC = () => {
           branchesLoading={branchesLoading}
           branchesError={branchesError}
           fieldOfficers={fieldOfficers}
+          fieldOfficersLoading={fieldOfficersLoading}
+          fieldOfficersError={fieldOfficersError}
           villages={villages}
         />
       </Modal>
@@ -593,6 +606,8 @@ export const Centers: React.FC = () => {
             branchesLoading={branchesLoading}
             branchesError={branchesError}
             fieldOfficers={fieldOfficers}
+            fieldOfficersLoading={fieldOfficersLoading}
+            fieldOfficersError={fieldOfficersError}
             villages={villages}
           />
         )}

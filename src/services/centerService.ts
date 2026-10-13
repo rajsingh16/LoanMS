@@ -1,6 +1,22 @@
 import { apiFetch } from '../lib/api';
 import { Center, CenterFormData } from '../types/center';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeOptionalUuid(value: string | null | undefined, label = 'UUID'): string | null {
+  const normalized = value?.trim() || '';
+  if (!normalized) return null;
+  if (!UUID_PATTERN.test(normalized)) throw new Error(`${label} is invalid`);
+  return normalized;
+}
+
+function requireUuid(value: string | null | undefined, label: string): string {
+  const normalized = value?.trim() || '';
+  if (!normalized) throw new Error(`${label} is required`);
+  if (!UUID_PATTERN.test(normalized)) throw new Error(`${label} is invalid`);
+  return normalized;
+}
+
 class CenterService {
   private normalizeStatus(status: unknown): Center['status'] {
     // Backend should return only 'active'/'inactive', but we defensively coerce.
@@ -68,13 +84,15 @@ class CenterService {
 
   async createCenter(formData: CenterFormData): Promise<Center> {
     try {
+      const branchId = requireUuid(formData.branchId, 'Branch');
+      const assignedTo = requireUuid(formData.assignedTo, 'Field Officer');
       const res = await apiFetch('/api/centers', {
         method: 'POST',
         body: JSON.stringify({
           center_name: formData.centerName,
-          branch_id: formData.branchId,
+          branch_id: branchId,
           village: formData.villageId,
-          assigned_to: formData.assignedTo,
+          assigned_to: assignedTo,
           center_day: formData.centerDay,
           center_time: formData.centerTime,
           contact_person_name: formData.contactPersonName,
@@ -92,7 +110,7 @@ class CenterService {
           status: formData.status || 'active',
           blacklisted: formData.blacklisted || false,
           bc_center_id: formData.bcCenterId,
-          parent_center_id: formData.parentCenterId,
+          parent_center_id: normalizeOptionalUuid(formData.parentCenterId, 'Parent Center ID'),
         }),
       });
       const { data, error } = await res.json();
@@ -151,13 +169,15 @@ class CenterService {
 
   async updateCenter(id: string, formData: CenterFormData): Promise<Center> {
     try {
+      const branchId = requireUuid(formData.branchId, 'Branch');
+      const assignedTo = requireUuid(formData.assignedTo, 'Field Officer');
       const res = await apiFetch(`/api/centers/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({
           center_name: formData.centerName,
-          branch_id: formData.branchId,
+          branch_id: branchId,
           village: formData.villageId,
-          assigned_to: formData.assignedTo,
+          assigned_to: assignedTo,
           center_day: formData.centerDay,
           center_time: formData.centerTime,
           contact_person_name: formData.contactPersonName,
@@ -175,7 +195,7 @@ class CenterService {
           status: formData.status,
           blacklisted: formData.blacklisted,
           bc_center_id: formData.bcCenterId,
-          parent_center_id: formData.parentCenterId,
+          parent_center_id: normalizeOptionalUuid(formData.parentCenterId, 'Parent Center ID'),
         }),
       });
       const { data, error } = await res.json();

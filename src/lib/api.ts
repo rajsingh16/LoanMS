@@ -65,10 +65,7 @@ export const auth = {
           username: userData.username,
           first_name: userData.first_name,
           last_name: userData.last_name,
-          role: userData.role,
-          branch_id: userData.branch_id,
           phone: userData.phone,
-          employee_id: userData.employee_id,
         }),
       });
       const j = await res.json();
@@ -158,6 +155,27 @@ export const db = {
     } catch (error) {
       console.error('Get all users error:', error);
       return { data: null, error: { message: 'Network error getting users.' } };
+    }
+  },
+
+  createUser: async (userData: {
+    email: string;
+    username: string;
+    first_name: string;
+    last_name: string;
+    phone?: string | null;
+    employee_id?: string | null;
+    role: string;
+    branch_id?: string | null;
+    status?: string;
+  }) => {
+    try {
+      const res = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(userData) });
+      const j = await res.json();
+      if (!res.ok) return { data: null, error: { message: j.error?.message || j.error || 'User creation failed' } };
+      return { data: j.data, error: j.error };
+    } catch {
+      return { data: null, error: { message: 'Network error creating user.' } };
     }
   },
 

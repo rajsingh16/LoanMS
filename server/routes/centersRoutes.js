@@ -1,6 +1,29 @@
 import { Router } from 'express';
 import { quoteIdent } from '../utils/centerHelpers.js';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeOptionalUuid(value, label = 'UUID') {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const normalized = String(value).trim();
+  if (!UUID_PATTERN.test(normalized)) {
+    const error = new Error(`${label} is invalid`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return normalized;
+}
+
+function normalizeRequiredUuid(value, label) {
+  const normalized = normalizeOptionalUuid(value);
+  if (!normalized) {
+    const error = new Error(`${label} is required`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return normalized;
+}
+
 export function createCentersRoutes({ pool, authenticateRequest, getCenterTableName, getActiveBranchById }) {
   const router = Router();
 
@@ -49,10 +72,17 @@ export function createCentersRoutes({ pool, authenticateRequest, getCenterTableN
   }
   
   router.post('/', authenticateRequest, async (req, res) => {
-    const b = req.body;
+    const b = req.body || {};
     try {
       const centerTable = quoteIdent(await getCenterTableName());
-      const branch = await getActiveBranchById(b.branch_id);
+      const branchId = normalizeRequiredUuid(b.branch_id, 'Branch');
+      const assignedTo = normalizeRequiredUuid(b.assigned_to, 'Field Officer');
+      if (!String(b.village || '').trim()) return res.status(400).json({ data: null, error: { message: 'Village is required' } });
+      const parentCenterId = normalizeOptionalUuid(b.parent_center_id, 'Parent Center ID');
+      const createdBy = normalizeRequiredUuid(req.userId, 'Creator');
+      const officerResult = await pool.query(`SELECT id FROM user_profiles WHERE id = $1 AND role = 'field_officer' AND status = 'active'`, [assignedTo]);
+      if (!officerResult.rows.length) return res.status(400).json({ data: null, error: { message: 'Selected Field Officer is not active or does not exist.' } });
+      const branch = await getActiveBranchById(branchId);
       if (!branch) {
         return res.status(400).json({
           data: null,
@@ -73,9 +103,9 @@ export function createCentersRoutes({ pool, authenticateRequest, getCenterTableN
         [
           centerCode,
           b.center_name,
-          b.branch_id,
+          branchId,
           b.village ?? null,
-          b.assigned_to ?? null,
+          assignedTo,
           b.center_day ?? null,
           b.center_time ?? null,
           b.contact_person_name ?? null,
@@ -93,8 +123,8 @@ export function createCentersRoutes({ pool, authenticateRequest, getCenterTableN
           b.status ?? 'active',
           b.blacklisted ?? false,
           b.bc_center_id ?? null,
-          b.parent_center_id ?? null,
-          req.userId,
+          parentCenterId,
+          createdBy,
         ]
       );
       const id = rows[0].id;
@@ -118,15 +148,16 @@ export function createCentersRoutes({ pool, authenticateRequest, getCenterTableN
           : null,
         assigned_user: r.a_id ? { id: r.a_id, first_name: r.a_fn, last_name: r.a_ln } : null,
       };
-      return res.json({ data, error: null });
+      return res.status(201).json({ data, error: null });
     } catch (e) {
       console.error(e);
-      return res.json({ data: null, error: { message: e.message } });
+      if (e.statusCode === 400 || e.code === '22P02') return res.status(400).json({ data: null, error: { message: e.message } });
+      return res.status(500).json({ data: null, error: { message: 'Failed to create center' } });
     }
   });
   
   router.patch('/:id', authenticateRequest, async (req, res) => {
-    const b = req.body;
+    const b = req.body || {};
     const fields = [
       'center_name',
       'branch_id',
@@ -154,6 +185,14 @@ export function createCentersRoutes({ pool, authenticateRequest, getCenterTableN
     const sets = [];
     const vals = [];
     let i = 1;
+    try {
+      if (b.branch_id !== undefined) b.branch_id = normalizeRequiredUuid(b.branch_id, 'Branch');
+      if (b.assigned_to !== undefined) b.assigned_to = normalizeRequiredUuid(b.assigned_to, 'Field Officer');
+      if (b.parent_center_id !== undefined) b.parent_center_id = normalizeOptionalUuid(b.parent_center_id, 'Parent Center ID');
+      if (b.village !== undefined && !String(b.village || '').trim()) return res.status(400).json({ data: null, error: { message: 'Village is required' } });
+    } catch (e) {
+      return res.status(400).json({ data: null, error: { message: e.message } });
+    }
     for (const f of fields) {
       if (b[f] !== undefined) {
         sets.push(`${f} = $${i++}`);
@@ -173,6 +212,10 @@ export function createCentersRoutes({ pool, authenticateRequest, getCenterTableN
             error: { message: 'Please select a valid active branch before updating this center.' },
           });
         }
+      }
+      if (b.assigned_to !== undefined) {
+        const officerResult = await pool.query(`SELECT id FROM user_profiles WHERE id = $1 AND role = 'field_officer' AND status = 'active'`, [b.assigned_to]);
+        if (!officerResult.rows.length) return res.status(400).json({ data: null, error: { message: 'Selected Field Officer is not active or does not exist.' } });
       }
   
       const centerTable = quoteIdent(await getCenterTableName());
@@ -206,10 +249,11 @@ export function createCentersRoutes({ pool, authenticateRequest, getCenterTableN
         assigned_user: r.a_id ? { id: r.a_id, first_name: r.a_fn, last_name: r.a_ln } : null,
         created_user: r.c_id ? { id: r.c_id, first_name: r.c_fn, last_name: r.c_ln } : null,
       };
-      return res.json({ data, error: null });
+      return res.status(200).json({ data, error: null });
     } catch (e) {
       console.error(e);
-      return res.json({ data: null, error: { message: e.message } });
+      if (e.code === '22P02') return res.status(400).json({ data: null, error: { message: 'One or more UUID values are invalid.' } });
+      return res.status(500).json({ data: null, error: { message: 'Failed to update center' } });
     }
   });
   

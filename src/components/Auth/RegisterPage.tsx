@@ -1,9 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CreditCard, Eye, EyeOff, Mail, Lock, User, AlertCircle, CheckCircle } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
-import { db } from '../../lib/api';
-import { Branch } from '../../types/database';
 
 export const RegisterPage: React.FC = () => {
   const [formData, setFormData] = useState({
@@ -13,45 +11,17 @@ export const RegisterPage: React.FC = () => {
     email: '',
     password: '',
     confirmPassword: '',
-    role: 'admin',
-    branchId: '',
     phone: '',
-    employeeId: '',
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [branches, setBranches] = useState<Branch[]>([]);
 
   const { register } = useAuth();
   const navigate = useNavigate();
 
-  const roles = [
-    { value: 'admin', label: 'Administrator' },
-    { value: 'external_sanction', label: 'External Sanction' },
-    { value: 'mis', label: 'MIS' },
-    { value: 'receipt_payment', label: 'Receipt Payment' },
-    { value: 'role_bm', label: 'Branch Manager' },
-    { value: 'role_fo', label: 'Field Officer' },
-    { value: 'role_accountant', label: 'Accountant' },
-    { value: 'role_auditor', label: 'Auditor' },
-    { value: 'role_hr', label: 'Human Resources' },
-    { value: 'role_tele_caller', label: 'Tele Caller' },
-    // Add more commonly used roles here
-  ];
-
-  useEffect(() => {
-    loadBranches();
-  }, []);
-
-  const loadBranches = async () => {
-    const { data, error } = await db.getBranches();
-    if (data && !error) {
-      setBranches(data);
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,11 +50,10 @@ export const RegisterPage: React.FC = () => {
       role: formData.role,
       branchId: formData.branchId || undefined,
       phone: formData.phone || undefined,
-      employeeId: formData.employeeId || undefined,
     });
 
     if (result.success) {
-      setSuccess('Registration successful! You can sign in with your email and password.');
+      setSuccess('Registration submitted successfully. Your account is pending approval by an administrator.');
       setTimeout(() => {
         navigate('/login');
       }, 3000);
@@ -225,54 +194,7 @@ export const RegisterPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="role" className="block text-sm font-medium text-gray-700">
-                  Role *
-                </label>
-                <div className="mt-1">
-                  <select
-                    id="role"
-                    name="role"
-                    required
-                    value={formData.role}
-                    onChange={handleChange}
-                    className="block w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors duration-200"
-                  >
-                    {roles.map(role => (
-                      <option key={role.value} value={role.value}>
-                        {role.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="branchId" className="block text-sm font-medium text-gray-700">
-                  Branch
-                </label>
-                <div className="mt-1">
-                  <select
-                    id="branchId"
-                    name="branchId"
-                    value={formData.branchId}
-                    onChange={handleChange}
-                    className="block w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors duration-200"
-                  >
-                    <option value="">Select Branch</option>
-                    {branches.map(branch => (
-                      <option key={branch.id} value={branch.id}>
-                        {branch.branch_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
+            <div>
                 <label htmlFor="phone" className="block text-sm font-medium text-gray-700">
                   Phone
                 </label>
@@ -287,24 +209,6 @@ export const RegisterPage: React.FC = () => {
                     placeholder="Phone number"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label htmlFor="employeeId" className="block text-sm font-medium text-gray-700">
-                  Employee ID
-                </label>
-                <div className="mt-1">
-                  <input
-                    id="employeeId"
-                    name="employeeId"
-                    type="text"
-                    value={formData.employeeId}
-                    onChange={handleChange}
-                    className="block w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors duration-200"
-                    placeholder="Employee ID"
-                  />
-                </div>
-              </div>
             </div>
 
             <div>

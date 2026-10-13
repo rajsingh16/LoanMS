@@ -12,6 +12,8 @@ interface CenterFormProps {
   branchesLoading?: boolean;
   branchesError?: string;
   fieldOfficers: { id: string; name: string }[];
+  fieldOfficersLoading?: boolean;
+  fieldOfficersError?: string;
   villages: { id: string; name: string }[];
 }
 
@@ -24,6 +26,8 @@ export const CenterForm: React.FC<CenterFormProps> = ({
   branchesLoading = false,
   branchesError = '',
   fieldOfficers,
+  fieldOfficersLoading = false,
+  fieldOfficersError = '',
   villages
 }) => {
   const [formData, setFormData] = useState<CenterFormData>({
@@ -73,7 +77,7 @@ export const CenterForm: React.FC<CenterFormProps> = ({
 
   useEffect(() => {
     validateForm();
-  }, [formData, branches, branchesLoading]);
+  }, [formData, branches, branchesLoading, fieldOfficers, fieldOfficersLoading, fieldOfficersError]);
 
   useEffect(() => {
     const selectedBranch = branches.find(branch => branch.id === formData.branchId);
@@ -118,7 +122,8 @@ export const CenterForm: React.FC<CenterFormProps> = ({
     if (!formData.centerName) newErrors.centerName = 'Center name is required';
     if (!formData.centerDay) newErrors.centerDay = 'Center day is required';
     if (!formData.centerTime) newErrors.centerTime = 'Center time is required';
-    if (!formData.assignedTo) newErrors.assignedTo = 'Field officer assignment is required';
+    if (!formData.assignedTo) newErrors.assignedTo = 'Field Officer is required';
+    if (!fieldOfficersLoading && !fieldOfficersError && fieldOfficers.length === 0) newErrors.assignedTo = 'No active Field Officers available';
     if (!formData.address1) newErrors.address1 = 'Address is required';
     if (!formData.villageId) newErrors.villageId = 'Village is required';
 
@@ -278,15 +283,18 @@ export const CenterForm: React.FC<CenterFormProps> = ({
               <select
                 value={formData.assignedTo}
                 onChange={(e) => handleChange('assignedTo', e.target.value)}
+                disabled={fieldOfficersLoading || Boolean(fieldOfficersError) || fieldOfficers.length === 0}
                 className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white dark:border-gray-600 ${
                   errors.assignedTo ? 'border-red-300 dark:border-red-500' : 'border-gray-300 dark:border-gray-600'
                 }`}
               >
-                <option value="">Select Field Officer</option>
+                <option value="">{fieldOfficersLoading ? 'Loading Field Officers...' : fieldOfficersError ? 'Unable to load Field Officers' : fieldOfficers.length === 0 ? 'No active Field Officers available' : 'Select Field Officer'}</option>
                 {fieldOfficers.map(officer => (
                   <option key={officer.id} value={officer.id}>{officer.name}</option>
                 ))}
               </select>
+              {fieldOfficersError && <p className="text-red-500 text-xs mt-1">Unable to load Field Officers</p>}
+              {!fieldOfficersLoading && !fieldOfficersError && fieldOfficers.length === 0 && <p className="text-amber-600 dark:text-amber-400 text-xs mt-1">Create or activate a Field Officer before assigning a Center.</p>}
               {errors.assignedTo && <p className="text-red-500 text-xs mt-1">{errors.assignedTo}</p>}
             </div>
 

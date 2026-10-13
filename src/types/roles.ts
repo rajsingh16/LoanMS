@@ -27,9 +27,16 @@ export interface UserRole {
 export const ROLE_CODES = {
   // Core roles
   ADMIN: 'admin',
+  ADMINISTRATOR: 'administrator',
   EXTERNAL_SANCTION: 'external_sanction',
   MIS: 'mis',
   RECEIPT_PAYMENT: 'receipt_payment',
+  BRANCH_MANAGER: 'branch_manager',
+  FIELD_OFFICER: 'field_officer',
+  ACCOUNTANT: 'accountant',
+  AUDITOR: 'auditor',
+  HUMAN_RESOURCES: 'human_resources',
+  TELE_CALLER: 'tele_caller',
   BYPASS_2FA: 'bypass_2fa',
   LOAN_WAIVER: 'loan_waiver',
   

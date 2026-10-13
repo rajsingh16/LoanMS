@@ -14,6 +14,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuClick }) => {
   const getRoleColor = (role: string) => {
     const colors = {
       admin: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+      administrator: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
       manager: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
       finance_officer: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
       loan_officer: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',

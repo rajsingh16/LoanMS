@@ -36,9 +36,9 @@ export interface Database {
           username: string;
           first_name: string;
           last_name: string;
-          role: string; // Updated to support any role from roles table
+          role: string | null; // Updated to support any role from roles table
           branch_id: string | null;
-          status: 'active' | 'inactive' | 'suspended';
+          status: 'pending' | 'active' | 'inactive' | 'suspended';
           phone: string | null;
           employee_id: string | null;
           created_at: string;
@@ -49,9 +49,9 @@ export interface Database {
           username: string;
           first_name: string;
           last_name: string;
-          role?: string;
+          role?: string | null;
           branch_id?: string | null;
-          status?: 'active' | 'inactive' | 'suspended';
+          status?: 'pending' | 'active' | 'inactive' | 'suspended';
           phone?: string | null;
           employee_id?: string | null;
           created_at?: string;
@@ -62,9 +62,9 @@ export interface Database {
           username?: string;
           first_name?: string;
           last_name?: string;
-          role?: string;
+          role?: string | null;
           branch_id?: string | null;
-          status?: 'active' | 'inactive' | 'suspended';
+          status?: 'pending' | 'active' | 'inactive' | 'suspended';
           phone?: string | null;
           employee_id?: string | null;
           created_at?: string;

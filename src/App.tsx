@@ -39,6 +39,10 @@ import { DeathReport } from './pages/Loan/Reports/DeathReport';
 import { InsuranceReport } from './pages/Loan/Reports/InsuranceReport';
 import { DueVsCollectionReport } from './pages/Loan/Reports/DueVsCollectionReport';
 import { useSessionTimeout } from './hooks/useSessionTimeout';
+import { AdminPanel } from './pages/Admin/AdminPanel';
+import { LoanApplicationDetails } from './pages/Loan/Transaction/LoanApplicationDetails';
+import LoanAccounts from '../src/pages/Loan/Transaction/LoanAccounts';
+import LoanAccountDetails from '../src/pages/Loan/Transaction/LoanAccountDetails';
 
 // Placeholder components for other routes
 const PlaceholderPage: React.FC<{ title: string }> = ({ title }) => (
@@ -94,6 +98,9 @@ function AppRoutes() {
         <Route path="loan/master/purpose" element={<Purpose />} />
         
         <Route path="loan/transaction/application" element={<LoanApplicationPage />} />
+        <Route path="loan/transaction/application/:id" element={<LoanApplicationDetails />} />
+        <Route path="loan/transaction/accounts" element={<LoanAccounts />} />
+        <Route path="loan/transaction/accounts/:id" element={<LoanAccountDetails />} />
         <Route path="loan/transaction/details" element={<LoanDetailsPage />} />
         <Route path="loan/transaction/credit-bureau" element={<CreditBureauPage />} />
         <Route path="loan/transaction/neft" element={<NEFTDisbursementPage />} />
@@ -139,7 +146,8 @@ function AppRoutes() {
         <Route path="loan/dashboard/funnel" element={<PlaceholderPage title="Application Funnel" />} />
         
         {/* Admin Routes */}
-        <Route path="admin/roles" element={<PlaceholderPage title="Role Management" />} />
+        <Route path="admin" element={<AdminPanel />} />
+        <Route path="admin/roles" element={<Navigate to="/admin" replace />} />
         
         {/* Other Module Routes */}
         <Route path="finance/master" element={<PlaceholderPage title="Finance Master" />} />

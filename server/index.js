@@ -21,6 +21,7 @@ import { createIfscRoutes } from './routes/ifscRoutes.js';
 import { createPurposesRoutes } from './routes/purposesRoutes.js';
 import { createClientsRoutes } from './routes/clientsRoutes.js';
 import { createBranchesRoutes } from './routes/branchesRoutes.js';
+import { createLoanApplicationsRoutes } from './routes/loanApplicationsRoutes.js';
 
 const PORT = Number(process.env.PORT) || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -112,6 +113,7 @@ app.use('/api/auth', createAuthRoutes({
 // --- Public branches (registration form) ---
 app.use('/api/branches', createBranchesRoutes({ pool }));
 app.use('/api/clients', createClientsRoutes({ pool, authenticateRequest: authMiddleware }));
+app.use('/api/loan-applications', createLoanApplicationsRoutes({ pool, authenticateRequest: authMiddleware }));
 
 // --- Users / profiles ---
 app.use('/api/users', createUsersRoutes({
@@ -216,7 +218,7 @@ function mapProductRow(row) {
     productId: row.product_id,
     productCode: row.product_code,
     productName: row.product_name,
-    productGroupId: row.product_group_id,
+    productGroupId: row.canonical_product_group_id || row.product_group_id,
     status: row.status,
     ...auditFields(row),
   };

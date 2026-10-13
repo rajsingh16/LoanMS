@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -51,6 +52,7 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, change, icon, color }
 };
 
 export const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
   const { auth } = useAuth();
   const [stats] = useState([
     {
@@ -131,6 +133,7 @@ export const Dashboard: React.FC = () => {
     const role = auth.user?.role;
     switch (role) {
       case 'admin':
+      case 'administrator':
         return 'Welcome back, Administrator! You have full system access.';
       case 'manager':
         return 'Welcome back, Manager! Monitor your branch performance.';
@@ -298,14 +301,14 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Admin Panel Link */}
-      <PermissionGuard roles="admin">
+      <PermissionGuard roles={['admin', 'administrator']}>
         <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 border border-purple-200 dark:border-purple-800 rounded-lg p-6">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-semibold text-purple-900 dark:text-purple-300">Admin Panel</h3>
               <p className="text-purple-700 dark:text-purple-400 mt-1">Manage users, roles, and system settings</p>
             </div>
-            <button className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors duration-200">
+            <button onClick={() => navigate('/admin')} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors duration-200">
               Access Admin Panel
             </button>
           </div>

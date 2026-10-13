@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { masterAuditSelect, masterError } from '../utils/masterResponses.js';
 
 export function createProductsRoutes({ pool, authenticateRequest, unsupportedCsvUpload, mapProductRow }) {
   const router = Router();
@@ -6,9 +7,12 @@ export function createProductsRoutes({ pool, authenticateRequest, unsupportedCsv
   router.get('', authenticateRequest, async (_req, res) => {
     try {
       const { rows } = await pool.query(`
-        SELECT t.*, ${masterAuditSelect}
+        SELECT t.*, pg.id AS canonical_product_group_id, ${masterAuditSelect}
         FROM products t
-        ${masterAuditJoin}
+        LEFT JOIN product_groups pg
+          ON pg.id = t.product_group_id
+        LEFT JOIN user_profiles cb ON cb.id = t.created_by
+        LEFT JOIN user_profiles ub ON ub.id = t.updated_by
         ORDER BY t.created_at DESC
       `);
       return res.json({ data: rows.map(mapProductRow), error: null });

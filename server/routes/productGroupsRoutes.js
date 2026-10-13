@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { masterAuditSelect, masterError } from '../utils/masterResponses.js';
 
 export function createProductGroupsRoutes({ pool, authenticateRequest, unsupportedCsvUpload, mapProductGroupRow }) {
   const router = Router();
@@ -8,7 +9,8 @@ export function createProductGroupsRoutes({ pool, authenticateRequest, unsupport
       const { rows } = await pool.query(`
         SELECT t.*, ${masterAuditSelect}
         FROM product_groups t
-        ${masterAuditJoin}
+        LEFT JOIN user_profiles cb ON cb.id = t.created_by
+        LEFT JOIN user_profiles ub ON ub.id = t.updated_by
         ORDER BY t.created_at DESC
       `);
       return res.json({ data: rows.map(mapProductGroupRow), error: null });

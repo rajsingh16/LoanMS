@@ -29,10 +29,7 @@ interface RegisterData {
   firstName: string;
   lastName: string;
   username: string;
-  role: string;
-  branchId?: string;
   phone?: string;
-  employeeId?: string;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -192,10 +189,7 @@ export const useAuthState = () => {
         username: userData.username,
         first_name: userData.firstName,
         last_name: userData.lastName,
-        role: userData.role,
-        branch_id: userData.branchId,
-        phone: userData.phone,
-        employee_id: userData.employeeId,
+          phone: userData.phone,
       });
 
       if (error) {
@@ -209,7 +203,7 @@ export const useAuthState = () => {
   };
 
   const hasPermission = (module: string, permission: string): boolean => {
-    if (authState.user?.role === 'admin') return true;
+    if (['admin', 'administrator'].includes(authState.user?.role?.toLowerCase() || '')) return true;
     return authState.userPermissions.includes(`${module}:${permission}`);
   };
 

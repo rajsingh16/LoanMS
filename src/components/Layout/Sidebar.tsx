@@ -56,8 +56,8 @@ const menuItems: MenuItem[] = [
           { id: 'centers', label: 'Centers', icon: null, path: '/loan/master/centers', module: 'loan', permission: 'read' },
           { id: 'villages', label: 'Villages', icon: null, path: '/loan/master/villages', module: 'loan', permission: 'read' },
           { id: 'clients', label: 'Clients', icon: null, path: '/loan/master/clients', module: 'loan', permission: 'read' },
-          { id: 'products', label: 'Products', icon: null, path: '/loan/master/products', module: 'loan', permission: 'read' },
           { id: 'product-groups', label: 'Product Groups', icon: null, path: '/loan/master/product-groups', module: 'loan', permission: 'read' },
+          { id: 'products', label: 'Products', icon: null, path: '/loan/master/products', module: 'loan', permission: 'read' },
           { id: 'districts', label: 'Districts', icon: null, path: '/loan/master/districts', module: 'loan', permission: 'read' },
           { id: 'insurance', label: 'Insurance', icon: null, path: '/loan/master/insurance', module: 'loan', permission: 'read' },
           { id: 'pincode', label: 'Pincode', icon: null, path: '/loan/master/pincode', module: 'loan', permission: 'read' },
@@ -71,6 +71,7 @@ const menuItems: MenuItem[] = [
         icon: <div className="w-2 h-2 bg-green-500 rounded-full"></div>,
         children: [
           { id: 'loan-application', label: 'Loan Application', icon: null, path: '/loan/transaction/application', module: 'loan', permission: 'write' },
+          { id: 'loan-account', label: 'Loan Account', icon: null, path: '/loan/transaction/accounts', module: 'loan', permission: 'read',},
           { id: 'loan-details', label: 'Loan Details', icon: null, path: '/loan/transaction/details', module: 'loan', permission: 'read' },
           { id: 'credit-bureau', label: 'Credit Bureau', icon: null, path: '/loan/transaction/credit-bureau', module: 'loan', permission: 'read' },
           { id: 'neft-disbursement', label: 'NEFT Disbursement', icon: null, path: '/loan/transaction/neft', module: 'loan', permission: 'write' },
