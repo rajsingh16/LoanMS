@@ -1,7 +1,10 @@
 import { Router } from 'express';
+import { requireMasterPermission } from '../middleware/authorization.js';
+import { createClientRecord } from '../services/clientCreation.js';
 
 export function createClientsRoutes({ pool, authenticateRequest }) {
   const router = Router();
+  router.use(authenticateRequest, requireMasterPermission('clients'));
 
   function calcClientAge(dateOfBirth) {
     const birth = new Date(dateOfBirth);
@@ -121,6 +124,14 @@ export function createClientsRoutes({ pool, authenticateRequest }) {
   });
   
   router.post('', authenticateRequest, async (req, res) => {
+    // Clients are intentionally created only as part of a new loan application.
+    // That route creates both records in one transaction, preventing orphaned clients.
+    return res.status(405).json({
+      data: null,
+      error: { message: 'Create clients from a new loan application.' },
+    });
+
+    /* istanbul ignore next -- retained below temporarily for legacy route history */
     const b = normalizeClientPayload(req.body || {});
     const required = [
       'first_name',
@@ -151,10 +162,9 @@ export function createClientsRoutes({ pool, authenticateRequest }) {
     }
   
     try {
-      const clientId = `CL${String(Date.now()).slice(-6)}`;
-      const age = calcClientAge(b.date_of_birth);
-  
-      const { rows } = await pool.query(
+      const created = await createClientRecord(pool, b, req.userId);
+      const { rows } = { rows: [created] };
+      /*
         `INSERT INTO clients (
           client_id, first_name, last_name, aadhaar_number, voter_card_number, kyc_type, kyc_id,
           cycle, date_of_birth, age, father_name, mother_name, gender, marital_status, mobile_number,
@@ -193,7 +203,7 @@ export function createClientsRoutes({ pool, authenticateRequest }) {
           b.monthly_obligation ?? 0,
           req.userId,
         ]
-      );
+      );*/
   
       const full = await pool.query(
         `

@@ -26,6 +26,7 @@ import {
   LoanApplicationAssessmentRequest,
   LoanApplicationStatusUpdate,
   LoanAccountReference,
+  LoanApplicationAuditEvent,
 } from '../../../services/transactionService/loanApplicationService';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
 
@@ -191,6 +192,20 @@ const LoanApplicationDetailsContent: React.FC = () => {
     repaymentFrequency: 'monthly' as 'weekly' | 'fortnightly' | 'monthly' | 'quarterly',
     emiAmount: '',
   });
+  const [history, setHistory] = useState<LoanApplicationAuditEvent[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPages, setHistoryPages] = useState(1);
+
+  const loadHistory = (page = 1) => {
+    if (!id) return;
+    setHistoryLoading(true); setHistoryError('');
+    loanApplicationService.getHistory(id, page).then((result) => {
+      setHistory(result.data); setHistoryPage(result.pagination.page); setHistoryPages(result.pagination.totalPages || 1);
+    }).catch((reason) => setHistoryError(reason instanceof Error ? reason.message : 'Unable to load application history'))
+      .finally(() => setHistoryLoading(false));
+  };
 
   const updateStatus = async (
     status: LoanApplicationStatus,
@@ -514,6 +529,8 @@ const LoanApplicationDetailsContent: React.FC = () => {
     };
   }, [id]);
 
+  useEffect(() => { loadHistory(1); }, [id]);
+
   const viewLoanAccount = () => {
     if (!existingLoanAccount || !UUID.test(existingLoanAccount.id)) {
       setLoanAccountMessage(
@@ -642,6 +659,7 @@ const LoanApplicationDetailsContent: React.FC = () => {
   const addresses = data.addresses ?? [];
   const family = data.familyMembers ?? [];
   const banks = data.bankAccounts ?? [];
+  const creditBureauChecks = data.creditBureauChecks ?? [];
   const documents = data.documents ?? [];
 
   return (
@@ -670,7 +688,7 @@ const LoanApplicationDetailsContent: React.FC = () => {
           <>
           <PermissionGuard
             module="loan"
-            permission="write"
+            permission="application.submit"
             fallback={<></>}
           >
             <button
@@ -683,7 +701,7 @@ const LoanApplicationDetailsContent: React.FC = () => {
             </button>
           </PermissionGuard>
           
-          <PermissionGuard module="loan" permission="write" fallback={<></>}>
+          <PermissionGuard module="loan" permission="application.draft.edit" fallback={<></>}>
               <button
                 type="button"
                 onClick={() =>
@@ -704,7 +722,7 @@ const LoanApplicationDetailsContent: React.FC = () => {
         {data.applicationStatus === 'submitted' && (
           <PermissionGuard
             module="loan"
-            permission="write"
+            permission="application.review"
             fallback={<></>}
           >
             <button
@@ -721,7 +739,7 @@ const LoanApplicationDetailsContent: React.FC = () => {
         {data.applicationStatus === 'under_review' && (
           <PermissionGuard
             module="loan"
-            permission="write"
+            permission="application.decision.record"
             fallback={<></>}
           >
             <button
@@ -748,7 +766,7 @@ const LoanApplicationDetailsContent: React.FC = () => {
           </PermissionGuard>
         )}
         {existingLoanAccount ? (
-          <PermissionGuard module="loan" permission="read" fallback={<></>}>
+          <PermissionGuard module="loan" permission="application.view" fallback={<></>}>
             <button
               type="button"
               onClick={viewLoanAccount}
@@ -760,7 +778,7 @@ const LoanApplicationDetailsContent: React.FC = () => {
           </PermissionGuard>
         ) : data.applicationStatus === 'approved' &&
           data.sanctionStatus === 'approved' && !hasValidLoanTerms(data) ? (
-            <PermissionGuard module="loan" permission="write" fallback={<></>}>
+            <PermissionGuard module="loan" permission="application.terms.confirm" fallback={<></>}>
               <button
                 type="button"
                 disabled={savingLoanTerms}
@@ -775,7 +793,7 @@ const LoanApplicationDetailsContent: React.FC = () => {
           data.sanctionStatus === 'approved' && (
             <PermissionGuard
               module="loan"
-              permission="write"
+              permission="application.account.create"
               fallback={<></>}
             >
               <button
@@ -928,6 +946,18 @@ const LoanApplicationDetailsContent: React.FC = () => {
         </div>
       </Card>
 
+      <Card icon={<ClipboardCheck className="h-5 w-5" />} title="Activity History">
+        {historyLoading ? <Empty text="Loading history..." /> : historyError ? (
+          <div className="flex items-center gap-3 text-sm text-red-600"><span>{historyError}</span><button type="button" className="underline" onClick={() => loadHistory(historyPage)}>Retry</button></div>
+        ) : history.length ? <div className="space-y-3">{history.map((event) => (
+          <SubCard key={event.id}><div className="flex flex-col gap-1 sm:flex-row sm:justify-between"><strong className="capitalize">{event.event_type.replaceAll('_', ' ')}</strong><span className="text-xs text-gray-500">{new Date(event.occurred_at).toLocaleString()}</span></div>
+            <p className="text-sm text-gray-600 dark:text-gray-300">{event.actor_name}{event.previous_status || event.new_status ? ` · ${event.previous_status || '—'} → ${event.new_status || '—'}` : ''}</p>
+            {event.remarks && <p className="mt-1 whitespace-pre-wrap text-sm">{event.remarks}</p>}
+            {(event.previous_values || event.new_values) && <div className="mt-2 grid gap-1 text-xs text-gray-600 dark:text-gray-300">{Array.from(new Set([...Object.keys(event.previous_values || {}), ...Object.keys(event.new_values || {})])).map((key) => <div key={key}><span className="font-medium">{key}: </span>{show(event.previous_values?.[key])} → {show(event.new_values?.[key])}</div>)}</div>}
+          </SubCard>))}</div> : <Empty text="No recorded activity yet." />}
+        {historyPages > 1 && <div className="mt-4 flex justify-end gap-2"><button type="button" disabled={historyLoading || historyPage <= 1} onClick={() => loadHistory(historyPage - 1)} className="rounded border px-3 py-1 text-sm disabled:opacity-50">Previous</button><button type="button" disabled={historyLoading || historyPage >= historyPages} onClick={() => loadHistory(historyPage + 1)} className="rounded border px-3 py-1 text-sm disabled:opacity-50">Next</button></div>}
+      </Card>
+
       <Card
         icon={<DollarSign className="h-5 w-5" />}
         title="Financial Assessment (Client Master)"
@@ -1061,6 +1091,9 @@ const LoanApplicationDetailsContent: React.FC = () => {
         ) : (
           <Empty text="No bank accounts recorded." />
         )}
+      </Card>
+      <Card icon={<CreditCard className="h-5 w-5" />} title="Credit Bureau Checks">
+        {creditBureauChecks.length ? <div className="space-y-3">{creditBureauChecks.map((check, i) => <SubCard key={`${check.createdAt}-${i}`}><Grid><Item label="Provider">{show(check.bureauProvider)}</Item><Item label="Status"><Badge status={check.checkStatus} /></Item><Item label="Result">{show(check.bureauResult)}</Item><Item label="Check Date">{date(check.checkedAt || check.createdAt)}</Item><Item label="Report Type">{check.isTest ? 'TEST (manual prototype)' : 'Verified'}</Item><Item label="Credit Score">{show(check.creditScore)}</Item></Grid></SubCard>)}</div> : <Empty text="No credit bureau checks recorded." />}
       </Card>
       {/* =======================================================
         FIELD VERIFICATION
@@ -1857,7 +1890,7 @@ const LoanApplicationDetailsContent: React.FC = () => {
                           d.verificationStatus !== 'verified' && (
                             <PermissionGuard
                               module="loan"
-                              permission="write"
+                              permission="application.documents.verify"
                               fallback={<></>}
                             >
                               <button

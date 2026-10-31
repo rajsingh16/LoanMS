@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   TrendingUp, 
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { PermissionGuard } from '../components/Common/PermissionGuard';
+import { ApplicationDashboard, loanApplicationService, LoanApplicationListItem } from '../services/transactionService/loanApplicationService';
 
 interface StatCardProps {
   title: string;
@@ -54,62 +55,34 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, change, icon, color }
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const { auth } = useAuth();
-  const [stats] = useState([
-    {
-      title: 'Total Loans',
-      value: '2,847',
-      change: 12.5,
-      icon: <CreditCard className="w-6 h-6 text-white" />,
-      color: 'bg-blue-500'
-    },
-    {
-      title: 'Active Clients',
-      value: '1,423',
-      change: 8.2,
-      icon: <Users className="w-6 h-6 text-white" />,
-      color: 'bg-green-500'
-    },
-    {
-      title: 'Total Disbursed',
-      value: '₹45.2L',
-      change: 15.3,
-      icon: <DollarSign className="w-6 h-6 text-white" />,
-      color: 'bg-indigo-500'
-    },
-    {
-      title: 'Overdue Amount',
-      value: '₹2.1L',
-      change: -5.4,
-      icon: <AlertTriangle className="w-6 h-6 text-white" />,
-      color: 'bg-red-500'
-    }
-  ]);
+  const [dashboard, setDashboard] = useState<ApplicationDashboard | null>(null);
+  const [recentApplications, setRecentApplications] = useState<LoanApplicationListItem[]>([]);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
-  const recentApplications = [
-    {
-      id: 'LA001',
-      client: 'Priya Sharma',
-      center: 'Anand Nagar',
-      amount: '₹50,000',
-      status: 'Pending Verification',
-      date: '2024-01-15'
-    },
-    {
-      id: 'LA002',
-      client: 'Rajesh Kumar',
-      center: 'Gandhi Colony',
-      amount: '₹75,000',
-      status: 'Approved',
-      date: '2024-01-14'
-    },
-    {
-      id: 'LA003',
-      client: 'Sunita Devi',
-      center: 'Nehru Park',
-      amount: '₹30,000',
-      status: 'Under Review',
-      date: '2024-01-13'
-    }
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const [summary, recent] = await Promise.all([
+          loanApplicationService.getDashboard(),
+          loanApplicationService.getAllApplications(),
+        ]);
+        if (!active) return;
+        setDashboard(summary);
+        setRecentApplications(recent.slice(0, 3));
+      } catch (error) {
+        if (active) setDashboardError(error instanceof Error ? error.message : 'Unable to load dashboard data.');
+      }
+    };
+    void load();
+    return () => { active = false; };
+  }, []);
+
+  const stats = [
+    { title: 'Total Loans', value: dashboard ? new Intl.NumberFormat('en-IN').format(dashboard.summary.total) : '—', change: 0, icon: <CreditCard className="w-6 h-6 text-white" />, color: 'bg-blue-500' },
+    { title: 'Active Clients', value: dashboard ? new Intl.NumberFormat('en-IN').format(dashboard.summary.submitted) : '—', change: 0, icon: <Users className="w-6 h-6 text-white" />, color: 'bg-green-500' },
+    { title: 'Total Disbursed', value: dashboard ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(dashboard.summary.requested_amount)) : '—', change: 0, icon: <DollarSign className="w-6 h-6 text-white" />, color: 'bg-indigo-500' },
+    { title: 'Overdue Amount', value: dashboard ? new Intl.NumberFormat('en-IN').format(dashboard.summary.pending_document_verification) : '—', change: 0, icon: <AlertTriangle className="w-6 h-6 text-white" />, color: 'bg-red-500' },
   ];
 
   const overdueLoans = [
@@ -175,8 +148,10 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
+      {dashboardError && <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-800">{dashboardError}</div>}
+
       {/* Stats Grid */}
-      <PermissionGuard module="loan" permission="read">
+      <PermissionGuard module="loan" permission="application.view">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {stats.map((stat, index) => (
             <StatCard key={index} {...stat} />
@@ -187,7 +162,7 @@ export const Dashboard: React.FC = () => {
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent Applications */}
-        <PermissionGuard module="loan" permission="read">
+        <PermissionGuard module="loan" permission="application.view">
           <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
             <div className="p-6 border-b border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between">
@@ -200,31 +175,38 @@ export const Dashboard: React.FC = () => {
             <div className="p-6">
               <div className="space-y-4">
                 {recentApplications.map((app) => (
+                  (() => {
+                    const client = [app.first_name, app.last_name].filter(Boolean).join(' ') || app.application_number;
+                    const label = app.application_status.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+                    return (
+
                   <div key={app.id} className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200">
                     <div className="flex items-center space-x-4">
                       <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900 rounded-full flex items-center justify-center">
                         <span className="text-blue-600 dark:text-blue-400 font-semibold text-sm">
-                          {app.client.split(' ').map(n => n[0]).join('')}
+                          {client.split(' ').map(n => n[0]).join('')}
                         </span>
                       </div>
                       <div>
-                        <p className="font-medium text-gray-900 dark:text-white">{app.client}</p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">{app.center} • {app.amount}</p>
+                        <p className="font-medium text-gray-900 dark:text-white">{client}</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">{app.center_name} • {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(Number(app.loan_amount))}</p>
                       </div>
                     </div>
                     <div className="text-right">
                       <span className={`inline-flex px-2 py-1 text-xs rounded-full font-medium ${
-                        app.status === 'Approved' 
+                        app.application_status === 'approved' 
                           ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                          : app.status === 'Pending Verification'
+                          : app.document_verification_status === 'pending'
                           ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
                           : 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
                       }`}>
-                        {app.status}
+                        {label}
                       </span>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{app.date}</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{app.application_date?.slice(0, 10)}</p>
                     </div>
                   </div>
+                  );
+                  })()
                 ))}
               </div>
             </div>
@@ -232,7 +214,7 @@ export const Dashboard: React.FC = () => {
         </PermissionGuard>
 
         {/* Overdue Loans */}
-        <PermissionGuard module="loan" permission="read">
+        <PermissionGuard module="loan" permission="application.view">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
             <div className="p-6 border-b border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between">
@@ -291,7 +273,7 @@ export const Dashboard: React.FC = () => {
             </button>
           </PermissionGuard>
           
-          <PermissionGuard module="loan" permission="read">
+          <PermissionGuard module="loan" permission="application.view">
             <button className="flex flex-col items-center p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200">
               <DollarSign className="w-8 h-8 text-indigo-600 dark:text-indigo-400 mb-2" />
               <span className="text-sm font-medium text-gray-900 dark:text-white">Collection</span>
@@ -317,3 +299,4 @@ export const Dashboard: React.FC = () => {
     </div>
   );
 };
+

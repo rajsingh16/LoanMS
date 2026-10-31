@@ -1,116 +1,25 @@
-// ─── WriteOffPage.tsx ──────────────────────────────────────────────────────
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { AlertCircle, CheckCircle, DollarSign, Upload } from 'lucide-react';
 import { DataTable } from '../../../components/Common/DataTable';
-import { PermissionGuard } from '../../../components/Common/PermissionGuard';
-import { writeOffService, WriteOffRecord, WriteOffFilterOptions } from '../../../services/transactionService/writeOffService';
-import {
-  Upload, Calendar, CheckCircle, Filter, ChevronDown, DollarSign, AlertCircle,
-} from 'lucide-react';
+import { EligibleLoan, writeOffService, WriteOffFilterOptions, WriteOffRecord } from '../../../services/transactionService/writeOffService';
 
-const FilterDropdown: React.FC<{ onFilter: (f: WriteOffFilterOptions) => void }> = ({ onFilter }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [filters, setFilters] = useState<WriteOffFilterOptions>({ dateFrom: '', dateTo: '' });
-  const change = (k: keyof WriteOffFilterOptions, v: string) => setFilters(prev => ({ ...prev, [k]: v }));
-  const apply = () => { onFilter(filters); setIsOpen(false); };
-  const clear = () => { const e = { dateFrom: '', dateTo: '' }; setFilters(e); onFilter(e); };
+const amount = (v: number | string) => `₹${Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const Read = ({ label, value }: { label: string; value: string }) => <div><p className="text-xs text-gray-500">{label}</p><p className="mt-1 rounded-lg bg-gray-50 p-2 text-sm dark:bg-gray-700 dark:text-white">{value}</p></div>;
 
-  return (
-    <div className="relative">
-      <button onClick={() => setIsOpen(!isOpen)} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white">
-        <Filter className="w-4 h-4" /><span>Search Filter</span><ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
-      {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-10 p-4 space-y-4">
-          <div className="flex items-center space-x-2"><Calendar className="w-5 h-5 text-gray-400" /><h3 className="text-lg font-semibold text-gray-900 dark:text-white">Date Range</h3></div>
-          <div className="grid grid-cols-2 gap-4">
-            {[{ key: 'dateFrom' as const, label: 'Date From', required: true }, { key: 'dateTo' as const, label: 'Date To', required: true }].map(({ key, label, required }) => (
-              <div key={key}><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label} {required && <span className="text-red-500">*</span>}</label>
-                <input type="date" value={filters[key]} onChange={e => change(key, e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white" /></div>
-            ))}
-          </div>
-          <div className="flex justify-between pt-4 border-t border-gray-200 dark:border-gray-600">
-            <button onClick={clear} className="px-4 py-2 text-gray-600 dark:text-gray-400">Clear All</button>
-            <button onClick={apply} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Apply Filters</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+const RequestModal: React.FC<{ onClose: () => void; onSaved: () => void }> = ({ onClose, onSaved }) => {
+  const [loans, setLoans] = useState<EligibleLoan[]>([]), [loanId, setLoanId] = useState(''), [principal, setPrincipal] = useState(''), [reason, setReason] = useState(''), [remarks, setRemarks] = useState(''), [error, setError] = useState(''), [saving, setSaving] = useState(false);
+  useEffect(() => { writeOffService.eligibleLoans().then(setLoans).catch(e => setError(e.message)); }, []);
+  const loan = loans.find(x => x.id === loanId);
+  const save = async (e: React.FormEvent) => { e.preventDefault(); if (!loan) return setError('Select a loan account'); if (!principal || Number(principal) <= 0 || Number(principal) > Number(loan.pos)) return setError('Principal must not exceed current POS'); if (!reason.trim()) return setError('Write-off reason is required'); try { setSaving(true); await writeOffService.create({ loanId, requestedPrincipal: principal, requestedInterest: '0', reason, remarks }); onSaved(); onClose(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Failed to create request'); } finally { setSaving(false); } };
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><form onSubmit={save} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-gray-800"><h2 className="text-xl font-semibold text-gray-900 dark:text-white">New Write-Off Request</h2>{error && <p className="mt-3 text-sm text-red-600">{error}</p>}<div className="mt-5 grid gap-4 md:grid-cols-2"><label className="md:col-span-2 text-sm text-gray-700 dark:text-gray-300">Loan Account<select value={loanId} onChange={e => setLoanId(e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:bg-gray-700"><option value="">Select eligible account</option>{loans.map(l => <option key={l.id} value={l.id}>{l.loan_account_number} — {l.client_name}</option>)}</select></label>{loan && <><Read label="Loan Account Number" value={loan.loan_account_number}/><Read label="Client Name" value={loan.client_name}/><Read label="Branch" value={loan.branch_name}/><Read label="Current POS" value={amount(loan.pos)}/><Read label="Current IARR" value="Unavailable — no accrued-interest ledger"/><label className="text-sm text-gray-700 dark:text-gray-300">Requested Principal Write-Off<input required inputMode="decimal" value={principal} onChange={e => setPrincipal(e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:bg-gray-700" /></label><label className="text-sm text-gray-700 dark:text-gray-300">Requested Interest Write-Off<input disabled value="0.00" className="mt-1 w-full rounded-lg border bg-gray-100 p-2 dark:bg-gray-700" /></label></>}<label className="md:col-span-2 text-sm text-gray-700 dark:text-gray-300">Write-Off Reason<input required value={reason} onChange={e => setReason(e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:bg-gray-700" /></label><label className="md:col-span-2 text-sm text-gray-700 dark:text-gray-300">Remarks<textarea value={remarks} onChange={e => setRemarks(e.target.value)} className="mt-1 w-full rounded-lg border p-2 dark:bg-gray-700" /></label></div><div className="mt-6 flex justify-end gap-3"><button type="button" onClick={onClose} className="rounded-lg border px-4 py-2 dark:text-white">Cancel</button><button disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2 text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save Request'}</button></div></form></div>;
 };
 
 export const WriteOffPage: React.FC = () => {
-  const [records, setRecords] = useState<WriteOffRecord[]>([]);
-  const [filteredRecords, setFilteredRecords] = useState<WriteOffRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const uploadInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => { loadRecords(); }, []);
-
-  const loadRecords = async (filters?: Partial<WriteOffFilterOptions>) => {
-    try {
-      setLoading(true);
-      const data = await writeOffService.getAllRecords(filters);
-      setRecords(data); setFilteredRecords(data);
-    } catch { setError('Failed to load write-off data'); }
-    finally { setLoading(false); }
-  };
-
-  const handleFilter = async (filters: WriteOffFilterOptions) => {
-    await loadRecords(filters);
-  };
-
-  const handleUpload = () => uploadInputRef.current?.click();
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    try {
-      const result = await writeOffService.uploadWriteOff(file);
-      setSuccess(result.message || 'File uploaded successfully!'); await loadRecords(); setTimeout(() => setSuccess(''), 3000);
-    } catch { setError('Upload failed'); }
-    e.target.value = '';
-  };
-
-  const handleWriteOff = async () => {
-    if (!window.confirm('Are you sure you want to process write-offs for all displayed records?')) return;
-    try {
-      setIsProcessing(true);
-      const result = await writeOffService.processWriteOff(filteredRecords.map(r => r.loanCode));
-      setSuccess(result.message || `${result.processed} loans written off successfully!`); await loadRecords(); setTimeout(() => setSuccess(''), 3000);
-    } catch { setError('Write-off processing failed'); }
-    finally { setIsProcessing(false); }
-  };
-
-  const totalPos = records.reduce((s, r) => s + r.pos, 0);
-  const totalIarr = records.reduce((s, r) => s + r.iarr, 0);
-
-  const columns = [
-    { key: 'loanCode', label: 'Loan Code', sortable: true, render: (v: string) => <span className="font-mono font-medium">{v}</span> },
-    { key: 'pos', label: 'POS', sortable: true, render: (v: number) => <div className="flex items-center space-x-1"><DollarSign className="w-4 h-4 text-gray-400" /><span className="font-medium">₹{v.toLocaleString()}</span></div> },
-    { key: 'iarr', label: 'IARR', sortable: true, render: (v: number) => <div className="flex items-center space-x-1"><DollarSign className="w-4 h-4 text-gray-400" /><span>₹{v.toLocaleString()}</span></div> },
-  ];
-
-  return (
-    <div className="space-y-6">
-      <input ref={uploadInputRef} type="file" accept=".csv,.xlsx" className="hidden" onChange={handleFileChange} />
-      <div><h1 className="text-2xl font-bold text-gray-900 dark:text-white">Write Off</h1><p className="text-gray-600 dark:text-gray-400 mt-1">Manage loan write-offs</p></div>
-      {success && <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 px-4 py-3 rounded-lg flex items-center space-x-2"><CheckCircle className="w-5 h-5 flex-shrink-0" /><span>{success}</span></div>}
-      {error && <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg flex items-center space-x-2"><AlertCircle className="w-5 h-5 flex-shrink-0" /><span>{error}</span></div>}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {[{ label: 'Total POS', value: `₹${totalPos.toLocaleString()}`, color: 'text-blue-600', bg: 'bg-blue-100 dark:bg-blue-900/30' }, { label: 'Total IARR', value: `₹${totalIarr.toLocaleString()}`, color: 'text-yellow-600', bg: 'bg-yellow-100 dark:bg-yellow-900/30' }, { label: 'Total Write-Off', value: `₹${(totalPos + totalIarr).toLocaleString()}`, color: 'text-red-600', bg: 'bg-red-100 dark:bg-red-900/30' }].map(({ label, value, color, bg }) => (
-          <div key={label} className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-            <div className="flex items-center space-x-3"><div className={`p-2 ${bg} rounded-lg`}><DollarSign className={`w-5 h-5 ${color}`} /></div><div><p className="text-sm font-medium text-gray-600 dark:text-gray-400">{label}</p><p className="text-xl font-bold text-gray-900 dark:text-white">{value}</p></div></div>
-          </div>
-        ))}
-      </div>
-      <DataTable columns={columns} data={filteredRecords} title="Write-Off Management" loading={loading}
-        filterComponent={<div className="flex items-center space-x-3">
-          <FilterDropdown onFilter={handleFilter} />
-          <PermissionGuard module="loan" permission="write"><button onClick={handleUpload} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white"><Upload className="w-4 h-4" /><span>Upload</span></button></PermissionGuard>
-          <PermissionGuard module="loan" permission="write"><button onClick={handleWriteOff} disabled={isProcessing || filteredRecords.length === 0} className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"><span>{isProcessing ? 'Processing...' : 'Write Off'}</span></button></PermissionGuard>
-        </div>} />
-    </div>
-  );
+ const [records,setRecords]=useState<WriteOffRecord[]>([]),[summary,setSummary]=useState({total_pos:'0',total_iarr:'0',total_write_off:'0'}),[loading,setLoading]=useState(true),[error,setError]=useState(''),[success,setSuccess]=useState(''),[filters,setFilters]=useState<WriteOffFilterOptions>({dateFrom:'',dateTo:'',status:''}),[showModal,setShowModal]=useState(false); const upload=useRef<HTMLInputElement>(null);
+ const load=async()=>{try{setLoading(true);setError('');const [r,s]=await Promise.all([writeOffService.getAllRecords(filters),writeOffService.summary()]);setRecords(r);setSummary(s);}catch(cause){setError(cause instanceof Error?cause.message:'Failed to load write-off data');}finally{setLoading(false);}};useEffect(()=>{load();},[filters.dateFrom,filters.dateTo,filters.status]);
+ const action=async(id:string,kind:'approve'|'reject'|'post')=>{const remarks=kind==='reject'?window.prompt('Rejection reason')||'':'';if(kind==='reject'&&!remarks)return;try{if(kind==='approve')await writeOffService.approve(id);else if(kind==='reject')await writeOffService.reject(id,remarks);else await writeOffService.post(id);setSuccess(`Write-off ${kind}d successfully`);load();}catch(cause){setError(cause instanceof Error?cause.message:'Action failed');}};
+ const importCsv=async(e:React.ChangeEvent<HTMLInputElement>)=>{const file=e.target.files?.[0];if(!file)return;try{const rows=(await file.text()).split(/\r?\n/).slice(1).filter(Boolean).map(x=>x.split(',').map(y=>y.trim()));let created=0;for(const [loanId,principal,reason,remarks=''] of rows){if(!loanId||!principal||!reason)throw new Error('CSV needs loan UUID, principal, reason, remarks columns');await writeOffService.create({loanId,requestedPrincipal:principal,requestedInterest:'0',reason,remarks});created++;}setSuccess(`${created} write-off request(s) imported for review`);load();}catch(cause){setError(cause instanceof Error?cause.message:'Import failed');}finally{e.target.value='';}};
+ const columns=[{key:'loanCode',label:'Loan Code',sortable:true},{key:'pos',label:'POS',sortable:true,render:(v:number)=>amount(v)},{key:'iarr',label:'IARR',sortable:true,render:(v:number)=>amount(v)},{key:'requestedWriteOff',label:'Requested Write-Off',render:(v:number)=>amount(v)},{key:'postedWriteOff',label:'Posted Write-Off',render:(v:number)=>amount(v)},{key:'status',label:'Status',render:(v:string)=><span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium dark:bg-gray-700">{v}</span>},{key:'requestedAt',label:'Request Date',render:(v:string)=>new Date(v).toLocaleDateString()},{key:'approvalDate',label:'Approval Date',render:(v:string)=>v?new Date(v).toLocaleDateString():'—'},{key:'actions',label:'Actions',render:(_:unknown,row:WriteOffRecord)=><div className="flex gap-2">{row.status==='pending'&&<button onClick={()=>action(row.id,'approve')} className="text-blue-600">Approve</button>}{row.status==='pending'&&<button onClick={()=>action(row.id,'reject')} className="text-red-600">Reject</button>}{row.status==='approved'&&<button onClick={()=>action(row.id,'post')} className="text-green-600">Post</button>}</div>}];
+ return <div className="space-y-6"><input ref={upload} type="file" accept=".csv" className="hidden" onChange={importCsv}/><div><h1 className="text-2xl font-bold text-gray-900 dark:text-white">Write Off</h1><p className="mt-1 text-gray-600 dark:text-gray-400">Manage loan write-offs</p></div>{success&&<Banner good text={success}/>} {error&&<Banner text={error}/>}<div className="grid grid-cols-1 gap-4 md:grid-cols-3">{[['Total POS',summary.total_pos,'text-blue-600','bg-blue-100 dark:bg-blue-900/30'],['Total IARR',summary.total_iarr,'text-yellow-600','bg-yellow-100 dark:bg-yellow-900/30'],['Total Write-Off',summary.total_write_off,'text-red-600','bg-red-100 dark:bg-red-900/30']].map(([label,value,color,bg])=><div key={label} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800"><div className="flex items-center gap-3"><div className={`rounded-lg p-2 ${bg}`}><DollarSign className={`h-5 w-5 ${color}`}/></div><div><p className="text-sm text-gray-600 dark:text-gray-400">{label}</p><p className="text-xl font-bold dark:text-white">{amount(value)}</p></div></div></div>)}</div><DataTable columns={columns} data={records} title="Write-Off Management" loading={loading} onAdd={()=>setShowModal(true)} filterComponent={<div className="flex flex-wrap gap-2"><input type="date" value={filters.dateFrom} onChange={e=>setFilters(x=>({...x,dateFrom:e.target.value}))} className="rounded-lg border p-2 dark:bg-gray-700 dark:text-white"/><input type="date" value={filters.dateTo} onChange={e=>setFilters(x=>({...x,dateTo:e.target.value}))} className="rounded-lg border p-2 dark:bg-gray-700 dark:text-white"/><select value={filters.status} onChange={e=>setFilters(x=>({...x,status:e.target.value}))} className="rounded-lg border p-2 dark:bg-gray-700 dark:text-white"><option value="">Search Filter</option>{['pending','approved','rejected','posted','reversed'].map(x=><option key={x}>{x}</option>)}</select><button onClick={()=>upload.current?.click()} className="flex items-center gap-2 rounded-lg border px-3 py-2 dark:text-white"><Upload className="h-4 w-4"/>Upload</button><button onClick={()=>{const r=records.find(x=>x.status==='approved');if(r)action(r.id,'post');else setError('Approve a request before posting.');}} className="rounded-lg bg-red-600 px-4 py-2 text-white">Write Off</button></div>}/>{showModal&&<RequestModal onClose={()=>setShowModal(false)} onSaved={()=>{setSuccess('Write-off request saved for approval');load();}}/>}</div>;
 };
+const Banner=({text,good=false}:{text:string;good?:boolean})=><div className={`flex items-center gap-2 rounded-lg border px-4 py-3 ${good?'border-green-200 bg-green-50 text-green-700':'border-red-200 bg-red-50 text-red-700'} dark:bg-opacity-20`}>{good?<CheckCircle className="h-5 w-5"/>:<AlertCircle className="h-5 w-5"/>}{text}</div>;

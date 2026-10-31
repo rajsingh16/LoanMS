@@ -7,6 +7,8 @@
     "dev": "concurrently -n web,api -c blue,magenta \"vite\" \"node server/index.js\"",
     "dev:web": "vite",
     "server": "node server/index.js",
+    "db:test:migrate": "node server/scripts/migrate-test-database.js up",
+    "db:test:status": "node server/scripts/migrate-test-database.js status",
     "import:pincodes": "node server/scripts/import-pincodes.js",
     "build": "vite build",
     "lint": "eslint .",
@@ -24,7 +26,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.22.1",
-    "recharts": "^2.10.3"
+    "recharts": "^2.10.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",

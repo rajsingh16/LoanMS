@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import { requireMasterPermission } from '../middleware/authorization.js';
 import { masterAuditSelect, masterError } from '../utils/masterResponses.js';
 
 export function createProductGroupsRoutes({ pool, authenticateRequest, unsupportedCsvUpload, mapProductGroupRow }) {
   const router = Router();
+  router.use(authenticateRequest, requireMasterPermission('product_groups'));
 
   router.get('', authenticateRequest, async (_req, res) => {
     try {

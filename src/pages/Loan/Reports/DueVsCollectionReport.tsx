@@ -10,6 +10,7 @@ import {
   ChevronDown,
   FileText
 } from 'lucide-react';
+import { apiFetch } from '../../../lib/api';
 
 interface DueVsCollectionRecord {
   id: string;
@@ -38,9 +39,21 @@ interface FilterOptions {
   collectionSegment?: string;
 }
 
+interface DueVsCollectionSummary {
+  from: string;
+  to: string;
+  scheduled_due: string | number;
+  principal_due: string | number;
+  interest_due: string | number;
+  fees_due: string | number;
+  collected_amount: string | number;
+  collection_count: string | number;
+}
+
 const FilterDropdown: React.FC<{
   onFilter: (filters: FilterOptions) => void;
-}> = ({ onFilter }) => {
+  onValidationError: (message: string) => void;
+}> = ({ onFilter, onValidationError }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [filters, setFilters] = useState<FilterOptions>({
     dateFrom: '',
@@ -54,7 +67,11 @@ const FilterDropdown: React.FC<{
 
   const applyFilters = () => {
     if (!filters.dateFrom || !filters.dateTo) {
-      alert('Date range is mandatory');
+      onValidationError('Date From and Date To are required.');
+      return;
+    }
+    if (filters.dateFrom > filters.dateTo) {
+      onValidationError('Date From must not be later than Date To.');
       return;
     }
     
@@ -222,104 +239,69 @@ const FilterDropdown: React.FC<{
 };
 
 export const DueVsCollectionReport: React.FC = () => {
-  const [records, setRecords] = useState<DueVsCollectionRecord[]>([
-    {
-      id: '1',
-      reportStatus: 'completed',
-      startDate: '2024-01-01',
-      endDate: '2024-01-31',
-      userId: 'USER001',
-      reportName: 'January Collection Report',
-      fromDate: '2024-01-01',
-      toDate: '2024-01-31',
-      branch: 'Main Branch',
-      collectionType: 'cash',
-      bcPartnerId: 'BCP001',
-      collectionSegment: 'regular'
-    },
-    {
-      id: '2',
-      reportStatus: 'in-progress',
-      startDate: '2024-02-01',
-      endDate: '2024-02-29',
-      userId: 'USER001',
-      reportName: 'February Collection Report',
-      fromDate: '2024-02-01',
-      toDate: '2024-02-29',
-      branch: 'North Branch',
-      collectionType: 'digital',
-      bcPartnerId: 'BCP002',
-      collectionSegment: 'overdue'
-    },
-    {
-      id: '3',
-      reportStatus: 'failed',
-      startDate: '2024-03-01',
-      endDate: '2024-03-31',
-      userId: 'USER002',
-      reportName: 'March Collection Report',
-      fromDate: '2024-03-01',
-      toDate: '2024-03-31',
-      branch: 'South Branch',
-      collectionType: 'bank-transfer',
-      bcPartnerId: 'BCP003',
-      collectionSegment: 'advance'
-    }
-  ]);
+  const [records, setRecords] = useState<DueVsCollectionRecord[]>([]);
   
   const [filteredRecords, setFilteredRecords] = useState<DueVsCollectionRecord[]>(records);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
-  const [editingRecord, setEditingRecord] = useState<DueVsCollectionRecord | null>(null);
+  const [appliedFilters, setAppliedFilters] = useState<FilterOptions | null>(null);
+  const [summary, setSummary] = useState<DueVsCollectionSummary | null>(null);
 
-  const handleFilter = (filters: FilterOptions) => {
-    let filtered = records;
+  const money = (value: string | number) => Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-    // Apply filters based on the filter options
-    if (filters.state) {
-      // In a real application, this would filter by state
-      filtered = filtered;
+  const loadReport = async (filters: FilterOptions) => {
+    const unsupported = ['state', 'zone', 'division', 'branch', 'collectionType', 'bcPartnerId', 'collectionSegment']
+      .filter(key => Boolean(filters[key as keyof FilterOptions]));
+    if (unsupported.length) {
+      setError(`The authoritative Due vs Collection API does not support: ${unsupported.join(', ')}.`);
+      return;
     }
-    if (filters.zone) {
-      // In a real application, this would filter by zone
-      filtered = filtered;
+    setAppliedFilters(filters);
+    setLoading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const query = new URLSearchParams({ from: filters.dateFrom, to: filters.dateTo });
+      const response = await apiFetch(`/api/repayments/reports/due-vs-collection?${query.toString()}`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.error?.message || 'Failed to load due vs collection data');
+      const result = body.data as DueVsCollectionSummary;
+      const report: DueVsCollectionRecord = { id: `${result.from}:${result.to}`, reportStatus: '—', startDate: result.from, endDate: result.to, userId: '—', reportName: 'Due Vs Collection', fromDate: result.from, toDate: result.to, branch: '—', collectionType: '—', bcPartnerId: '—', collectionSegment: '—' };
+      setRecords([report]);
+      setFilteredRecords([report]);
+      setSummary(result);
+      const outstanding = Number(result.scheduled_due) - Number(result.collected_amount);
+      setSuccess(`Due: ₹${money(result.scheduled_due)} · Collected: ₹${money(result.collected_amount)} · Outstanding: ₹${money(outstanding)} · ${result.collection_count} posted collection(s).`);
+    } catch (reason) {
+      setRecords([]);
+      setFilteredRecords([]);
+      setSummary(null);
+      setError(reason instanceof Error ? reason.message : 'Failed to load due vs collection data');
+    } finally {
+      setLoading(false);
     }
-    if (filters.division) {
-      // In a real application, this would filter by division
-      filtered = filtered;
-    }
-    if (filters.branch) {
-      filtered = filtered.filter(record => record.branch.toLowerCase().includes(filters.branch!.toLowerCase()));
-    }
-    if (filters.dateFrom && filters.dateTo) {
-      filtered = filtered.filter(record => 
-        record.fromDate >= filters.dateFrom && 
-        record.toDate <= filters.dateTo
-      );
-    }
-    if (filters.collectionType) {
-      filtered = filtered.filter(record => record.collectionType === filters.collectionType);
-    }
-    if (filters.bcPartnerId) {
-      filtered = filtered.filter(record => record.bcPartnerId.toLowerCase().includes(filters.bcPartnerId!.toLowerCase()));
-    }
-    if (filters.collectionSegment) {
-      filtered = filtered.filter(record => record.collectionSegment === filters.collectionSegment);
-    }
-
-    setFilteredRecords(filtered);
   };
 
-  const handleDownload = (id: string) => {
-    // In a real application, this would download the specific report
-    alert(`Downloading report with ID: ${id}`);
+  const handleFilter = (filters: FilterOptions) => { void loadReport(filters); };
+
+  const handleDownload = () => {
+    if (!summary) return;
+    const rows = [
+      ['From Date', 'To Date', 'Scheduled Due', 'Principal Due', 'Interest Due', 'Fees Due', 'Collected Amount', 'Outstanding Due', 'Posted Collections'],
+      [summary.from, summary.to, summary.scheduled_due, summary.principal_due, summary.interest_due, summary.fees_due, summary.collected_amount, String(Number(summary.scheduled_due) - Number(summary.collected_amount)), summary.collection_count].map(String),
+    ];
+    const blob = new Blob([rows.map(row => row.map(value => `"${value.replace(/"/g, '""')}"`).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `due-vs-collection-${summary.from}-to-${summary.to}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleEdit = (record: DueVsCollectionRecord) => {
-    setEditingRecord(record);
-    // In a real application, this would open an edit form or modal
-    alert(`Editing record with ID: ${record.id}`);
+    setSuccess(`No persisted detail view exists for the ${record.reportName} aggregate.`);
   };
 
   const getStatusIcon = (status: string) => {
@@ -350,7 +332,7 @@ export const DueVsCollectionReport: React.FC = () => {
       label: 'Download',
       render: (value: any, row: DueVsCollectionRecord) => (
         <button
-          onClick={() => handleDownload(row.id)}
+          onClick={(event) => { event.stopPropagation(); handleDownload(); }}
           className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 rounded transition-colors duration-200"
           title="Download"
         >
@@ -494,7 +476,7 @@ export const DueVsCollectionReport: React.FC = () => {
       {error && (
         <div className="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-700 text-red-700 dark:text-red-200 px-4 py-3 rounded-lg flex items-center space-x-2">
           <XCircle className="w-5 h-5 flex-shrink-0" />
-          <span>{error}</span>
+          <div><span>{error}</span>{appliedFilters && <button onClick={() => void loadReport(appliedFilters)} className="ml-3 text-sm underline">Retry</button>}</div>
         </div>
       )}
 
@@ -509,7 +491,7 @@ export const DueVsCollectionReport: React.FC = () => {
               </p>
             </div>
             
-            <FilterDropdown onFilter={handleFilter} />
+            <FilterDropdown onFilter={handleFilter} onValidationError={setError} />
           </div>
         </div>
 

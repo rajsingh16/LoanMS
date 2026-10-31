@@ -15,6 +15,7 @@ import { createPincodesRoutes } from './routes/pincodesRoutes.js';
 import { createVillagesRoutes } from './routes/villagesRoutes.js';
 import { createProductGroupsRoutes } from './routes/productGroupsRoutes.js';
 import { createProductsRoutes } from './routes/productsRoutes.js';
+import { createProductBranchMappingsRoutes } from './routes/productBranchMappingsRoutes.js';
 import { createDistrictsRoutes } from './routes/districtsRoutes.js';
 import { createInsuranceRoutes } from './routes/insuranceRoutes.js';
 import { createIfscRoutes } from './routes/ifscRoutes.js';
@@ -22,6 +23,16 @@ import { createPurposesRoutes } from './routes/purposesRoutes.js';
 import { createClientsRoutes } from './routes/clientsRoutes.js';
 import { createBranchesRoutes } from './routes/branchesRoutes.js';
 import { createLoanApplicationsRoutes } from './routes/loanApplicationsRoutes.js';
+import { createApplicationVerificationRoutes } from './routes/applicationVerificationRoutes.js';
+import { createRepaymentRoutes } from './routes/repaymentRoutes.js';
+import { createCreditBureauRoutes } from './routes/creditBureauRoutes.js';
+import { createNeftDisbursementsRoutes } from './routes/neftDisbursementsRoutes.js';
+import { createWriteOffRoutes } from './routes/writeOffRoutes.js';
+import { createCenterTransfersRoutes } from './routes/centerTransfersRoutes.js';
+import { createCenterMeetingsRoutes } from './routes/centerMeetingsRoutes.js';
+import { createDeathCasesRoutes } from './routes/deathCasesRoutes.js';
+import { createBranchDayCloseRoutes } from './routes/branchDayCloseRoutes.js';
+import { createBranchAuditRoutes } from './routes/branchAuditRoutes.js';
 
 const PORT = Number(process.env.PORT) || 3001;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -114,6 +125,14 @@ app.use('/api/auth', createAuthRoutes({
 app.use('/api/branches', createBranchesRoutes({ pool }));
 app.use('/api/clients', createClientsRoutes({ pool, authenticateRequest: authMiddleware }));
 app.use('/api/loan-applications', createLoanApplicationsRoutes({ pool, authenticateRequest: authMiddleware }));
+app.use('/api/application-verification', createApplicationVerificationRoutes({ pool, authenticateRequest: authMiddleware }));
+app.use('/api/repayments', createRepaymentRoutes({ pool, authenticateRequest: authMiddleware }));
+app.use('/api/credit-bureau', createCreditBureauRoutes({ pool, authenticateRequest: authMiddleware }));
+app.use('/api/neft-disbursements', createNeftDisbursementsRoutes({ pool, authenticateRequest: authMiddleware }));
+app.use('/api/write-offs', createWriteOffRoutes({ pool, authenticateRequest: authMiddleware }));
+app.use('/api/death-cases', createDeathCasesRoutes({ pool, authenticateRequest: authMiddleware }));
+app.use('/api/branch-day-close', createBranchDayCloseRoutes({ pool, authenticateRequest: authMiddleware }));
+app.use('/api/branch-audits', createBranchAuditRoutes({ pool, authenticateRequest: authMiddleware }));
 
 // --- Users / profiles ---
 app.use('/api/users', createUsersRoutes({
@@ -135,6 +154,12 @@ app.use('/api/centers', createCentersRoutes({
   authenticateRequest: authMiddleware,
   ...centerHelpers,
 }));
+app.use('/api/center-transfers', createCenterTransfersRoutes({
+  pool,
+  authenticateRequest: authMiddleware,
+  ...centerHelpers,
+}));
+app.use('/api/center-meetings', createCenterMeetingsRoutes({ pool, authenticateRequest: authMiddleware, ...centerHelpers }));
 
 // --- Areas ---
 const areaHelpers = createAreaHelpers({ pool });
@@ -301,6 +326,7 @@ app.use('/api/products', createProductsRoutes({
   unsupportedCsvUpload,
   mapProductRow,
 }));
+app.use('/api/product-branch-mappings', createProductBranchMappingsRoutes({ pool, authenticateRequest: authMiddleware }));
 
 app.use('/api/districts', createDistrictsRoutes({ pool, authenticateRequest: authMiddleware, unsupportedCsvUpload, mapDistrictRow }));
 app.use('/api/insurance', createInsuranceRoutes({ pool, authenticateRequest: authMiddleware, unsupportedCsvUpload, mapInsuranceRow }));

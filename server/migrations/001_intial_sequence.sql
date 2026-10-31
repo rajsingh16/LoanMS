@@ -2,7 +2,7 @@
 -- Maps login email/password to existing user_profiles.id rows.
 
 CREATE TABLE IF NOT EXISTS user_credentials (
-  user_id UUID PRIMARY KEY REFERENCES user_profiles (id) ON DELETE CASCADE,
+  user_id UUID PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -64,6 +64,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_employee_id
 
 CREATE INDEX IF NOT EXISTS idx_user_profiles_role_status ON user_profiles (role, status);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_branch_id ON user_profiles (branch_id);
+
+-- user_credentials intentionally appears before user_profiles in this historic
+-- migration. Add its foreign key only after the referenced table exists.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'user_credentials'::regclass
+      AND conname = 'user_credentials_user_id_fkey'
+  ) THEN
+    ALTER TABLE user_credentials
+      ADD CONSTRAINT user_credentials_user_id_fkey
+      FOREIGN KEY (user_id) REFERENCES user_profiles(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 -- Per-user module permissions
 

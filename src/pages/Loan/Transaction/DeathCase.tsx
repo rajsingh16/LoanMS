@@ -2,11 +2,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DataTable } from '../../../components/Common/DataTable';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
+import { Modal } from '../../../components/Common/Modal';
 import { deathCaseService, DeathCaseRecord, DeathCaseFilterOptions } from '../../../services/transactionService/deathCaseService';
 import {
   Download, Upload, Calendar, User, Phone, CheckCircle, XCircle,
   Filter, ChevronDown, Building, Edit, Trash2, AlertCircle,
 } from 'lucide-react';
+
+const Field: React.FC<{ label: string; value: string; onChange: (value: string) => void; type?: string; required?: boolean }> = ({ label, value, onChange, type = 'text', required }) => <label className="text-sm dark:text-gray-300">{label}<input required={required} type={type} value={value} onChange={e => onChange(e.target.value)} className="mt-1 w-full p-2 border rounded dark:bg-gray-700" /></label>;
 
 const FilterDropdown: React.FC<{ onFilter: (f: DeathCaseFilterOptions) => void }> = ({ onFilter }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -53,13 +56,19 @@ export const DeathCasePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [summary, setSummary] = useState<Record<string, number>>({});
+  const [options, setOptions] = useState<any>({ loans: [], insurance: [] });
+  const [editing, setEditing] = useState<DeathCaseRecord | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<Record<string, any>>({ dateReported: new Date().toISOString().slice(0, 10), clientSpouseFlag: false });
   const settlementInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { loadRecords(); }, []);
 
   const loadRecords = async () => {
-    try { setLoading(true); const data = await deathCaseService.getAllRecords(); setRecords(data); setFilteredRecords(data); }
-    catch { setError('Failed to load death case data'); }
+    try { setLoading(true); setError(''); const [data, counts] = await Promise.all([deathCaseService.getAllRecords(), deathCaseService.getSummary()]); setRecords(data); setFilteredRecords(data); setSummary(counts); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Failed to load death case data'); }
     finally { setLoading(false); }
   };
 
@@ -71,7 +80,10 @@ export const DeathCasePage: React.FC = () => {
     if (filters.loanCode) f = f.filter(r => r.loanCode.toLowerCase().includes(filters.loanCode!.toLowerCase()));
     if (filters.clientCode) f = f.filter(r => r.clientCode.toLowerCase().includes(filters.clientCode!.toLowerCase()));
     if (filters.deathStatus) f = f.filter(r => r.status === filters.deathStatus);
-    if (filters.deathReportDateFrom && filters.deathReportDateTo) f = f.filter(r => r.dateReported >= filters.deathReportDateFrom && r.dateReported <= filters.deathReportDateTo);
+    if (filters.deathReportDateFrom) f = f.filter(r => r.dateReported >= filters.deathReportDateFrom!);
+    if (filters.deathReportDateTo) f = f.filter(r => r.dateReported <= filters.deathReportDateTo!);
+    if (filters.caseProcessDateFrom) f = f.filter(r => (r.caseProcessDate || '') >= filters.caseProcessDateFrom!);
+    if (filters.caseProcessDateTo) f = f.filter(r => (r.caseProcessDate || '') <= filters.caseProcessDateTo!);
     setFilteredRecords(f);
   };
 
@@ -97,9 +109,12 @@ export const DeathCasePage: React.FC = () => {
 
   const getStatusIcon = (s: string) => { switch (s) { case 'settled': return <CheckCircle className="w-4 h-4 text-green-600" />; case 'rejected': return <XCircle className="w-4 h-4 text-red-600" />; case 'verified': return <CheckCircle className="w-4 h-4 text-blue-600" />; default: return <Calendar className="w-4 h-4 text-yellow-600" />; } };
   const getStatusColor = (s: string) => { switch (s) { case 'settled': return 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300'; case 'rejected': return 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300'; case 'verified': return 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300'; default: return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300'; } };
+  const openCreate = async () => { try { setOptions(await deathCaseService.getOptions()); setEditing(null); setForm({ dateReported: new Date().toISOString().slice(0, 10), clientSpouseFlag: false }); setFormOpen(true); } catch (e) { setError(e instanceof Error ? e.message : 'Unable to load form options'); } };
+  const openEdit = async (record: DeathCaseRecord) => { try { const loaded = await deathCaseService.getOptions(); setOptions(loaded); setEditing(record); setForm({ ...record, loanAccountId: loaded.loans?.find((x: any) => x.loan_account_number === record.loanCode)?.id, dateReported: record.dateReported?.slice(0, 10), dateOfDeath: record.dateOfDeath?.slice(0, 10) }); setFormOpen(true); } catch (e) { setError(e instanceof Error ? e.message : 'Unable to open edit form'); } };
+  const saveForm = async (event: React.FormEvent) => { event.preventDefault(); try { setSaving(true); setError(''); if (editing) await deathCaseService.updateRecord(editing.id, form); else await deathCaseService.createRecord(form); setFormOpen(false); setSuccess(editing ? 'Record updated.' : 'Death case created.'); await loadRecords(); } catch (e) { setError(e instanceof Error ? e.message : 'Unable to save death case'); } finally { setSaving(false); } };
 
   const columns = [
-    { key: 'actions', label: 'Action', render: (_: unknown, row: DeathCaseRecord) => (<div className="flex items-center space-x-2"><PermissionGuard module="loan" permission="write"><button onClick={() => console.log('Edit', row.id)} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"><Edit className="w-4 h-4" /></button></PermissionGuard><PermissionGuard module="loan" permission="delete"><button onClick={() => handleDelete(row.id)} className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"><Trash2 className="w-4 h-4" /></button></PermissionGuard></div>) },
+    { key: 'actions', label: 'Action', render: (_: unknown, row: DeathCaseRecord) => (<div className="flex items-center space-x-2"><PermissionGuard module="loan" permission="write"><button onClick={() => openEdit(row)} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"><Edit className="w-4 h-4" /></button></PermissionGuard><PermissionGuard module="loan" permission="delete"><button onClick={() => handleDelete(row.id)} className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"><Trash2 className="w-4 h-4" /></button></PermissionGuard></div>) },
     { key: 'branch', label: 'Branch', sortable: true, render: (v: string) => <div className="flex items-center space-x-2"><Building className="w-4 h-4 text-gray-400" /><span>{v}</span></div> },
     { key: 'centerCode', label: 'Center Code', sortable: true }, { key: 'centerName', label: 'Center Name', sortable: true },
     { key: 'deathId', label: 'Death Id', sortable: true, render: (v: string) => <span className="font-mono font-medium">{v}</span> },
@@ -122,16 +137,32 @@ export const DeathCasePage: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[{ label: 'Reported', status: 'reported', icon: Calendar, color: 'text-yellow-600', bg: 'bg-yellow-100 dark:bg-yellow-900/30' }, { label: 'Verified', status: 'verified', icon: CheckCircle, color: 'text-blue-600', bg: 'bg-blue-100 dark:bg-blue-900/30' }, { label: 'Settled', status: 'settled', icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-100 dark:bg-green-900/30' }, { label: 'Rejected', status: 'rejected', icon: XCircle, color: 'text-red-600', bg: 'bg-red-100 dark:bg-red-900/30' }].map(({ label, status, icon: Icon, color, bg }) => (
           <div key={label} className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-            <div className="flex items-center space-x-3"><div className={`p-2 ${bg} rounded-lg`}><Icon className={`w-5 h-5 ${color}`} /></div><div><p className="text-sm font-medium text-gray-600 dark:text-gray-400">{label}</p><p className="text-xl font-bold text-gray-900 dark:text-white">{records.filter(r => r.status === status).length}</p></div></div>
+            <div className="flex items-center space-x-3"><div className={`p-2 ${bg} rounded-lg`}><Icon className={`w-5 h-5 ${color}`} /></div><div><p className="text-sm font-medium text-gray-600 dark:text-gray-400">{label}</p><p className="text-xl font-bold text-gray-900 dark:text-white">{summary[status] ?? records.filter(r => r.status === status).length}</p></div></div>
           </div>
         ))}
       </div>
-      <DataTable columns={columns} data={filteredRecords} title="Death Case Records" loading={loading}
+      <DataTable columns={columns} data={filteredRecords} title="Death Case Records" loading={loading} onAdd={openCreate} onExport={() => deathCaseService.exportCSV(filteredRecords)}
         filterComponent={<div className="flex items-center space-x-3">
           <FilterDropdown onFilter={handleFilter} />
           <button onClick={() => deathCaseService.exportCSV(filteredRecords)} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white"><Download className="w-4 h-4" /><span>Download</span></button>
           <PermissionGuard module="loan" permission="write"><button onClick={handleSettlementUpload} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white"><Upload className="w-4 h-4" /><span>Settlement</span></button></PermissionGuard>
         </div>} />
+      <Modal isOpen={formOpen} onClose={() => setFormOpen(false)} title={editing ? 'Edit Death Case' : 'Add Death Case'} size="lg">
+        <form onSubmit={saveForm} className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+          {!editing && <label className="text-sm dark:text-gray-300 md:col-span-2">Loan Account<select required value={form.loanAccountId || ''} onChange={e => setForm((p: any) => ({ ...p, loanAccountId: e.target.value }))} className="mt-1 w-full p-2 border rounded dark:bg-gray-700"><option value="">Select loan account</option>{options.loans.map((l: any) => <option key={l.id} value={l.id}>{l.loan_account_number} — {l.client_name}</option>)}</select></label>}
+          {editing && <label className="text-sm dark:text-gray-300 md:col-span-2">Loan Account<input disabled value={editing.loanCode} className="mt-1 w-full p-2 border rounded dark:bg-gray-700" /></label>}
+          <label className="text-sm dark:text-gray-300">Insurance Reference<select value={form.insuranceReference || form.insuranceId || ''} onChange={e => setForm((p: any) => ({ ...p, insuranceReference: e.target.value }))} className="mt-1 w-full p-2 border rounded dark:bg-gray-700"><option value="">None</option>{options.insurance.map((i: any) => <option key={i.insurance_id} value={i.insurance_id}>{i.insurance_name} ({i.insurance_id})</option>)}</select></label>
+          <Field label="Date of Death" type="date" value={form.dateOfDeath || ''} onChange={(v: string) => setForm((p: any) => ({ ...p, dateOfDeath: v }))} />
+          <Field label="Date Reported" type="date" required value={form.dateReported || ''} onChange={(v: string) => setForm((p: any) => ({ ...p, dateReported: v }))} />
+          <Field label="Deceased Person Type" value={form.deceasedPersonType || ''} onChange={(v: string) => setForm((p: any) => ({ ...p, deceasedPersonType: v }))} />
+          <label className="text-sm dark:text-gray-300 flex items-center gap-2"><input type="checkbox" checked={!!form.clientSpouseFlag} onChange={e => setForm((p: any) => ({ ...p, clientSpouseFlag: e.target.checked }))} /> Client/Spouse Flag</label>
+          <Field label="Beneficiary Name" value={form.beneficiaryName || ''} onChange={(v: string) => setForm((p: any) => ({ ...p, beneficiaryName: v }))} />
+          <Field label="Beneficiary Phone Number" value={form.beneficiaryPhoneNumber || ''} onChange={(v: string) => setForm((p: any) => ({ ...p, beneficiaryPhoneNumber: v }))} />
+          <Field label="Claim Amount" value={form.claimAmount || ''} onChange={(v: string) => setForm((p: any) => ({ ...p, claimAmount: v }))} />
+          <label className="text-sm dark:text-gray-300 md:col-span-2">Remarks<textarea value={form.remarks || ''} onChange={e => setForm((p: any) => ({ ...p, remarks: e.target.value }))} className="mt-1 w-full p-2 border rounded dark:bg-gray-700" /></label>
+          <div className="md:col-span-2 flex justify-end gap-3"><button type="button" onClick={() => setFormOpen(false)} className="px-4 py-2 border rounded dark:text-white">Cancel</button><button disabled={saving} className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button></div>
+        </form>
+      </Modal>
     </div>
   );
 };

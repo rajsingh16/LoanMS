@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Upload, 
   CheckCircle, 
@@ -8,6 +8,7 @@ import {
   User, 
   FileText
 } from 'lucide-react';
+import { branchAuditService, type BranchAuditSummary } from '../../../services/transactionService/branchAuditService';
 
 export const BranchAuditPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
@@ -15,6 +16,12 @@ export const BranchAuditPage: React.FC = () => {
   const [success, setSuccess] = useState<string>('');
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [summary, setSummary] = useState<BranchAuditSummary | null>(null);
+
+  const showError = (message: string) => { setError(message); window.setTimeout(() => setError(''), 3000); };
+  const loadSummary = async () => { try { setSummary(await branchAuditService.getSummary()); } catch (err) { showError(err instanceof Error ? err.message : 'Failed to load audit summary'); } };
+  useEffect(() => { void loadSummary(); }, []);
+  const isExcelFile = (candidate: File) => /\.(xlsx|xls)$/i.test(candidate.name);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -33,14 +40,10 @@ export const BranchAuditPage: React.FC = () => {
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const droppedFile = e.dataTransfer.files[0];
-      if (droppedFile.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
-          droppedFile.type === 'application/vnd.ms-excel' ||
-          droppedFile.name.endsWith('.xlsx') || 
-          droppedFile.name.endsWith('.xls')) {
+      if (isExcelFile(droppedFile) && droppedFile.size <= 10 * 1024 * 1024) {
         setFile(droppedFile);
       } else {
-        setError('Please upload an Excel file (.xlsx or .xls)');
-        setTimeout(() => setError(''), 3000);
+        showError(droppedFile.size > 10 * 1024 * 1024 ? 'File must be 10 MB or smaller' : 'Please upload an Excel file (.xlsx or .xls)');
       }
     }
   };
@@ -48,41 +51,34 @@ export const BranchAuditPage: React.FC = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
-      if (selectedFile.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
-          selectedFile.type === 'application/vnd.ms-excel' ||
-          selectedFile.name.endsWith('.xlsx') || 
-          selectedFile.name.endsWith('.xls')) {
+      if (isExcelFile(selectedFile) && selectedFile.size <= 10 * 1024 * 1024) {
         setFile(selectedFile);
       } else {
-        setError('Please upload an Excel file (.xlsx or .xls)');
-        setTimeout(() => setError(''), 3000);
+        showError(selectedFile.size > 10 * 1024 * 1024 ? 'File must be 10 MB or smaller' : 'Please upload an Excel file (.xlsx or .xls)');
       }
     }
   };
 
   const handleUpload = async () => {
     if (!file) {
-      setError('Please select a file to upload');
-      setTimeout(() => setError(''), 3000);
+      showError('Please select a file to upload');
       return;
     }
 
-    setLoading(true);
-    
-    // Simulate upload process
-    setTimeout(() => {
+    setLoading(true); setError('');
+    try {
+      await branchAuditService.uploadAudit(file);
       setLoading(false);
       setSuccess('Branch audit file uploaded successfully!');
+      setFile(null);
+      await loadSummary();
       setTimeout(() => {
         setSuccess('');
-        setFile(null);
       }, 3000);
-    }, 2000);
+    } catch (err) { setLoading(false); showError(err instanceof Error ? err.message : 'Upload failed'); }
   };
 
-  const downloadTemplate = () => {
-    alert('Template download functionality will be implemented');
-  };
+  const downloadTemplate = async () => { try { await branchAuditService.downloadTemplate(); } catch (err) { showError(err instanceof Error ? err.message : 'Template download failed'); } };
 
   return (
     <div className="space-y-6">
@@ -236,7 +232,7 @@ export const BranchAuditPage: React.FC = () => {
               <Building className="w-5 h-5 text-blue-600" />
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Branches Audited</p>
-                <p className="text-xl font-bold text-gray-900">12</p>
+                <p className="text-xl font-bold text-gray-900">{summary?.totalBranchesAudited ?? 0}</p>
               </div>
             </div>
           </div>
@@ -246,7 +242,7 @@ export const BranchAuditPage: React.FC = () => {
               <CheckCircle className="w-5 h-5 text-green-600" />
               <div>
                 <p className="text-sm font-medium text-gray-600">Compliant Branches</p>
-                <p className="text-xl font-bold text-gray-900">9</p>
+                <p className="text-xl font-bold text-gray-900">{summary?.compliantBranches ?? 0}</p>
               </div>
             </div>
           </div>
@@ -256,7 +252,7 @@ export const BranchAuditPage: React.FC = () => {
               <XCircle className="w-5 h-5 text-red-600" />
               <div>
                 <p className="text-sm font-medium text-gray-600">Non-Compliant Branches</p>
-                <p className="text-xl font-bold text-gray-900">3</p>
+                <p className="text-xl font-bold text-gray-900">{summary?.nonCompliantBranches ?? 0}</p>
               </div>
             </div>
           </div>
@@ -267,11 +263,11 @@ export const BranchAuditPage: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <Calendar className="w-5 h-5 text-gray-500" />
-              <span className="text-gray-700">January 15, 2024</span>
+              <span className="text-gray-700">{summary?.latestUploadDate ? new Date(summary.latestUploadDate).toLocaleDateString() : 'No uploads yet'}</span>
             </div>
             <div className="flex items-center space-x-3">
               <User className="w-5 h-5 text-gray-500" />
-              <span className="text-gray-700">Uploaded by: Admin User</span>
+              <span className="text-gray-700">Uploaded by: {summary?.latestUploaderName || '—'}</span>
             </div>
           </div>
         </div>

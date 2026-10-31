@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireMasterPermission } from '../middleware/authorization.js';
 import { quoteIdent } from '../utils/centerHelpers.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -26,6 +27,7 @@ function normalizeRequiredUuid(value, label) {
 
 export function createCentersRoutes({ pool, authenticateRequest, getCenterTableName, getActiveBranchById }) {
   const router = Router();
+  router.use(authenticateRequest, requireMasterPermission('centers'));
 
   // --- Centers ---
   router.get('/', authenticateRequest, async (_req, res) => {

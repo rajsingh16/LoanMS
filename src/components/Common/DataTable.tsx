@@ -18,6 +18,7 @@ interface DataTableProps {
   exportable?: boolean;
   addable?: boolean;
   onAdd?: () => void;
+  onExport?: () => void;
   onRowClick?: (row: any) => void;
   loading?: boolean;
   filterComponent?: React.ReactNode;
@@ -32,6 +33,7 @@ export const DataTable: React.FC<DataTableProps> = ({
   exportable = true,
   addable = true,
   onAdd,
+  onExport,
   onRowClick,
   loading = false,
   filterComponent,
@@ -176,7 +178,7 @@ export const DataTable: React.FC<DataTableProps> = ({
             
             {exportable && (
               <button 
-                onClick={handleExport}
+                onClick={onExport || handleExport}
                 className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200 dark:text-white"
               >
                 <Download className="w-4 h-4" />

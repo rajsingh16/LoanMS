@@ -2,11 +2,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { DataTable } from '../../../components/Common/DataTable';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
 import { loanService, LoanDetail, LoanFilterOptions } from '../../../services/transactionService/loanService';
+import { repaymentService, RepaymentPayment, RepaymentSchedule, ScheduleEligibility } from '../../../services/transactionService/repaymentService';
 import {
   Search, Download, Upload, Tag, DollarSign, Calendar, User,
    Building, CheckCircle, XCircle, Edit, Trash2,
   Filter, ChevronDown, AlertCircle,
 } from 'lucide-react';
+
+function formatDate(value?: string) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleDateString();
+}
 
 // ─── Filter Dropdown ──────────────────────────────────────────────────────────
 const FilterDropdown: React.FC<{
@@ -153,6 +160,14 @@ export const LoanDetailsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [selectedRepaymentLoan, setSelectedRepaymentLoan] = useState<LoanDetail | null>(null);
+  const [scheduleEligibility, setScheduleEligibility] = useState<ScheduleEligibility | null>(null);
+  const [repaymentSchedule, setRepaymentSchedule] = useState<RepaymentSchedule | null>(null);
+  const [repaymentLoading, setRepaymentLoading] = useState(false);
+  const [repaymentError, setRepaymentError] = useState('');
+  const [payments, setPayments] = useState<RepaymentPayment[]>([]);
+  const [paymentForm, setPaymentForm] = useState({ amount: '', paymentDate: new Date().toISOString().slice(0, 10), paymentMethod: 'cash', referenceNumber: '', remarks: '' });
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const masterPolicyInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { loadLoans(); }, []);
@@ -160,11 +175,14 @@ export const LoanDetailsPage: React.FC = () => {
   const loadLoans = async () => {
     try {
       setLoading(true);
+      setError('');
       const data = await loanService.getAllLoans();
       setLoans(data);
       setFilteredLoans(data);
-    } catch {
-      setError('Failed to load loan details');
+    } catch (reason) {
+      setLoans([]);
+      setFilteredLoans([]);
+      setError(reason instanceof Error ? reason.message : 'Failed to load loan details');
     } finally {
       setLoading(false);
     }
@@ -240,6 +258,61 @@ export const LoanDetailsPage: React.FC = () => {
     setTimeout(() => setSuccess(''), 3000);
   };
 
+  const viewRepayment = async (loan: LoanDetail) => {
+    setSelectedRepaymentLoan(loan);
+    setRepaymentLoading(true);
+    setRepaymentError('');
+    setScheduleEligibility(null);
+    setRepaymentSchedule(null);
+    try {
+      const [eligibility, schedule, history] = await Promise.all([
+        repaymentService.eligibility(loan.loanAccountId),
+        repaymentService.schedule(loan.loanAccountId),
+        repaymentService.payments(loan.loanAccountId),
+      ]);
+      setScheduleEligibility(eligibility);
+      setRepaymentSchedule(schedule);
+      setPayments(history);
+    } catch (reason) {
+      setRepaymentError(reason instanceof Error ? reason.message : 'Failed to load repayment details');
+    } finally {
+      setRepaymentLoading(false);
+    }
+  };
+
+  const postPayment = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedRepaymentLoan || !repaymentSchedule?.installments.length || !scheduleEligibility?.eligible) return;
+    setPaymentSubmitting(true); setRepaymentError('');
+    try {
+      await repaymentService.postPayment(selectedRepaymentLoan.loanAccountId, { ...paymentForm, idempotencyKey: crypto.randomUUID() });
+      setPaymentForm(current => ({ ...current, amount: '', referenceNumber: '', remarks: '' }));
+      await viewRepayment(selectedRepaymentLoan);
+    } catch (reason) { setRepaymentError(reason instanceof Error ? reason.message : 'Failed to post payment'); }
+    finally { setPaymentSubmitting(false); }
+  };
+
+  const reversePayment = async (payment: RepaymentPayment) => {
+    const reason = window.prompt('Reason for reversal');
+    if (!reason?.trim() || !selectedRepaymentLoan) return;
+    setRepaymentLoading(true); setRepaymentError('');
+    try { await repaymentService.reversePayment(payment.id, reason.trim()); await viewRepayment(selectedRepaymentLoan); }
+    catch (reason) { setRepaymentError(reason instanceof Error ? reason.message : 'Failed to reverse payment'); setRepaymentLoading(false); }
+  };
+
+  const generateSchedule = async () => {
+    if (!selectedRepaymentLoan) return;
+    setRepaymentLoading(true);
+    setRepaymentError('');
+    try {
+      await repaymentService.generate(selectedRepaymentLoan.loanAccountId);
+      await viewRepayment(selectedRepaymentLoan);
+    } catch (reason) {
+      setRepaymentError(reason instanceof Error ? reason.message : 'Failed to generate repayment schedule');
+      setRepaymentLoading(false);
+    }
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'active': return <CheckCircle className="w-4 h-4 text-green-600" />;
@@ -277,13 +350,18 @@ export const LoanDetailsPage: React.FC = () => {
               <Trash2 className="w-4 h-4" />
             </button>
           </PermissionGuard>
+          <PermissionGuard module="loan" permission="read" fallback={null}>
+            <button onClick={() => void viewRepayment(row)} className="p-1 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded" title="Repayment schedule">
+              <Calendar className="w-4 h-4" />
+            </button>
+          </PermissionGuard>
         </div>
       ),
     },
     { key: 'loanCode', label: 'Loan Code', sortable: true, render: (v: string) => <span className="font-mono font-medium">{v}</span> },
     { key: 'clientCode', label: 'Client Code', sortable: true, render: (v: string) => <span className="font-mono">{v}</span> },
     { key: 'customerName', label: 'Customer Name', sortable: true, render: (v: string) => <div className="flex items-center space-x-2"><User className="w-4 h-4 text-gray-400" /><span className="font-medium">{v}</span></div> },
-    { key: 'customerDOB', label: 'Customer DOB', render: (v: string) => <div className="flex items-center space-x-1"><Calendar className="w-4 h-4 text-gray-400" /><span>{new Date(v).toLocaleDateString()}</span></div> },
+    { key: 'customerDOB', label: 'Customer DOB', render: (v: string) => <div className="flex items-center space-x-1"><Calendar className="w-4 h-4 text-gray-400" /><span>{formatDate(v)}</span></div> },
     { key: 'idProofName', label: 'ID Proof Name', sortable: true },
     { key: 'idProofNumber', label: 'ID Proof Number', render: (v: string) => <span className="font-mono">{v}</span> },
     { key: 'addressProofName', label: 'Address Proof Name', sortable: true },
@@ -393,11 +471,16 @@ export const LoanDetailsPage: React.FC = () => {
     { key: 'disbursedBy', label: 'Disbursed By' },
   ];
 
-  // Summary stats derived from live data
-  const activeLoans = loans.filter(l => l.status === 'active').length;
-  const totalDisbursed = loans.reduce((s, l) => s + l.disbursedAmount, 0);
-  const totalOutstanding = loans.reduce((s, l) => s + l.principalOutstanding, 0);
-  const totalArrears = loans.reduce((s, l) => s + l.principalArrear + l.interestArrear, 0);
+  // The table and cards must describe the same result set.  Repayments do not
+  // exist yet, so principal outstanding is the completed-disbursement amount
+  // exposed by the Phase 7 account API; arrears are consequently not available
+  // until the Phase 8 schedule/collection ledger is introduced.
+  const activeLoans = filteredLoans.filter(l => l.status === 'active').length;
+  const totalDisbursed = filteredLoans.reduce((s, l) => s + l.disbursedAmount, 0);
+  const totalOutstanding = filteredLoans.reduce((s, l) => s + l.principalOutstanding, 0);
+  const totalArrears = filteredLoans.reduce((s, l) => s + l.principalArrear + l.interestArrear, 0);
+  const hasLoadError = Boolean(error);
+  const arrearsAvailable = false;
 
   return (
     <div className="space-y-6">
@@ -424,10 +507,10 @@ export const LoanDetailsPage: React.FC = () => {
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
-          { label: 'Active Loans', value: activeLoans, icon: CheckCircle, iconColor: 'text-green-600', bg: 'bg-green-100 dark:bg-green-900/30', display: String(activeLoans) },
-          { label: 'Total Disbursed', value: totalDisbursed, icon: DollarSign, iconColor: 'text-blue-600', bg: 'bg-blue-100 dark:bg-blue-900/30', display: `₹${totalDisbursed.toLocaleString()}` },
-          { label: 'Total Outstanding', value: totalOutstanding, icon: DollarSign, iconColor: 'text-yellow-600', bg: 'bg-yellow-100 dark:bg-yellow-900/30', display: `₹${totalOutstanding.toLocaleString()}` },
-          { label: 'Total Arrears', value: totalArrears, icon: XCircle, iconColor: 'text-red-600', bg: 'bg-red-100 dark:bg-red-900/30', display: `₹${totalArrears.toLocaleString()}` },
+          { label: 'Active Loans', value: activeLoans, icon: CheckCircle, iconColor: 'text-green-600', bg: 'bg-green-100 dark:bg-green-900/30', display: hasLoadError ? '—' : String(activeLoans) },
+          { label: 'Total Disbursed', value: totalDisbursed, icon: DollarSign, iconColor: 'text-blue-600', bg: 'bg-blue-100 dark:bg-blue-900/30', display: hasLoadError ? '—' : `₹${totalDisbursed.toLocaleString()}` },
+          { label: 'Total Outstanding', value: totalOutstanding, icon: DollarSign, iconColor: 'text-yellow-600', bg: 'bg-yellow-100 dark:bg-yellow-900/30', display: hasLoadError ? '—' : `₹${totalOutstanding.toLocaleString()}` },
+          { label: 'Total Arrears', value: totalArrears, icon: XCircle, iconColor: 'text-red-600', bg: 'bg-red-100 dark:bg-red-900/30', display: hasLoadError || !arrearsAvailable ? '—' : `₹${totalArrears.toLocaleString()}` },
         ].map(({ label, icon: Icon, iconColor, bg, display }) => (
           <div key={label} className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
             <div className="flex items-center space-x-3">
@@ -444,6 +527,33 @@ export const LoanDetailsPage: React.FC = () => {
       </div>
 
       {/* Data Table */}
+      {selectedRepaymentLoan && (
+        <section className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-lg font-semibold text-gray-900 dark:text-white">Repayment details — {selectedRepaymentLoan.loanCode}</h2><p className="text-sm text-gray-600 dark:text-gray-400">Contractual eligibility and authoritative schedule ledger.</p></div>
+            <button onClick={() => setSelectedRepaymentLoan(null)} className="text-sm text-gray-600 dark:text-gray-300">Close</button>
+          </div>
+          {repaymentLoading && <p className="mt-4 text-sm text-gray-600 dark:text-gray-300">Loading repayment details…</p>}
+          {repaymentError && <div className="mt-4 text-sm text-red-700 dark:text-red-300"><p>{repaymentError}</p><button onClick={() => void viewRepayment(selectedRepaymentLoan)} className="mt-2 px-3 py-1 bg-blue-600 text-white rounded">Retry</button></div>}
+          {!repaymentLoading && !repaymentError && scheduleEligibility && (
+            <div className="mt-4">
+              {!scheduleEligibility.eligible ? <div className="rounded border border-amber-200 bg-amber-50 dark:bg-amber-900/20 p-3 text-sm text-amber-900 dark:text-amber-200"><p className="font-medium">Schedule generation is blocked by contractual terms or unsupported policy treatment.</p>{scheduleEligibility.missing.length > 0 && <p className="mt-1">Missing: {scheduleEligibility.missing.join(', ')}</p>}{scheduleEligibility.blockers?.length ? <p className="mt-1">Blocked: {scheduleEligibility.blockers.join(', ')}</p> : null}</div> : <PermissionGuard module="loan" permission="write" fallback={null}><button onClick={() => void generateSchedule()} className="mb-3 px-3 py-2 bg-blue-600 text-white rounded">Generate schedule</button></PermissionGuard>}
+              {!repaymentSchedule?.installments.length ? <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">No repayment schedule has been generated.</p> : <div className="mt-3 overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-gray-600 dark:text-gray-300"><th className="p-2">#</th><th className="p-2">Contractual due</th><th className="p-2">Collection due</th><th className="p-2">Principal</th><th className="p-2">Interest</th><th className="p-2">Fees</th><th className="p-2">Paid</th><th className="p-2">Outstanding</th><th className="p-2">Status</th></tr></thead><tbody>{repaymentSchedule.installments.map(item => { const paid = Number(item.principal_paid) + Number(item.interest_paid) + Number(item.fees_paid); const outstanding = Number(item.scheduled_amount) - paid; return <tr key={item.id} className="border-b border-gray-100 dark:border-gray-700"><td className="p-2">{item.installment_number}</td><td className="p-2">{formatDate(item.contractual_due_date)}</td><td className="p-2">{formatDate(item.collection_due_date)}</td><td className="p-2">₹{Number(item.scheduled_principal).toLocaleString()}</td><td className="p-2">₹{Number(item.scheduled_interest).toLocaleString()}</td><td className="p-2">₹{Number(item.scheduled_fees).toLocaleString()}</td><td className="p-2">₹{paid.toLocaleString()}</td><td className="p-2">₹{outstanding.toLocaleString()}</td><td className="p-2">{item.payment_status}</td></tr>; })}</tbody></table></div>}
+              {repaymentSchedule?.installments.length ? <>
+                <PermissionGuard module="loan" permission="write" fallback={null}><form onSubmit={postPayment} className="mt-5 grid grid-cols-1 md:grid-cols-5 gap-2 rounded border border-gray-200 dark:border-gray-700 p-3"><input required type="number" min="0.01" step="0.01" value={paymentForm.amount} onChange={e => setPaymentForm(current => ({ ...current, amount: e.target.value }))} placeholder="Amount" className="rounded border px-2 py-1 dark:bg-gray-700" /><input required type="date" value={paymentForm.paymentDate} onChange={e => setPaymentForm(current => ({ ...current, paymentDate: e.target.value }))} className="rounded border px-2 py-1 dark:bg-gray-700" /><select value={paymentForm.paymentMethod} onChange={e => setPaymentForm(current => ({ ...current, paymentMethod: e.target.value }))} className="rounded border px-2 py-1 dark:bg-gray-700"><option value="cash">Cash</option><option value="upi">UPI</option><option value="neft">NEFT</option><option value="bank_transfer">Bank transfer</option><option value="cheque">Cheque</option><option value="other">Other</option></select><input value={paymentForm.referenceNumber} onChange={e => setPaymentForm(current => ({ ...current, referenceNumber: e.target.value }))} placeholder="Reference" className="rounded border px-2 py-1 dark:bg-gray-700" /><button disabled={paymentSubmitting} className="rounded bg-green-600 px-3 py-1 text-white disabled:opacity-50">{paymentSubmitting ? 'Posting…' : 'Post payment'}</button></form></PermissionGuard>
+                <div className="mt-4"><h3 className="font-medium text-gray-900 dark:text-white">Payment history</h3>{payments.length === 0 ? <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">No payments posted.</p> : <div className="mt-2 space-y-2">{payments.map(payment => <div key={payment.id} className="flex flex-wrap items-center gap-3 border rounded p-2 text-sm"><span>{formatDate(payment.payment_date)}</span><span>₹{Number(payment.amount).toLocaleString()}</span><span className="capitalize">{payment.payment_method}</span><span>{payment.status}</span><span>Allocations: {payment.allocations.map(a => `P ₹${a.principal_amount}, I ₹${a.interest_amount}, F ₹${a.fees_amount}`).join(' · ')}</span>{payment.status === 'posted' && <PermissionGuard module="loan" permission="delete" fallback={null}><button onClick={() => void reversePayment(payment)} className="text-red-600">Reverse</button></PermissionGuard>}</div>)}</div>}</div>
+              </> : null}
+            </div>
+          )}
+        </section>
+      )}
+      {hasLoadError && !loading ? (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-red-200 dark:border-red-900 p-6">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Loan Management</h2>
+          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">Loan data could not be loaded. No empty result has been inferred from this failure.</p>
+          <button onClick={() => void loadLoans()} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Retry</button>
+        </div>
+      ) : (
       <DataTable
         columns={columns}
         data={filteredLoans}
@@ -479,6 +589,7 @@ export const LoanDetailsPage: React.FC = () => {
           </div>
         }
       />
+      )}
     </div>
   );
 };

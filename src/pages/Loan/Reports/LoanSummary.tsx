@@ -16,6 +16,7 @@ import {
   XCircle
 } from 'lucide-react';
 import { Pagination } from '../../../components/Common/Pagination';
+import { apiFetch } from '../../../lib/api';
 
 interface LoanSummaryRecord {
   loanCode: string;
@@ -124,7 +125,19 @@ interface LoanSummaryRecord {
   modeOfDisbursement: string;
   lastCollectionMode: string;
   lastCollectionTransactionId: string;
+  disbursedAmount: number;
 }
+
+// Legacy report columns that have no persisted counterpart deliberately render
+// the established empty marker instead of invented values.
+const emptyRecord = new Proxy({
+  isDeathTagged: false,
+  par30: false,
+  par90: false,
+  parAbove90: false,
+}, { get: (target, key) => key in target ? target[key as keyof typeof target] : '—' }) as LoanSummaryRecord;
+
+const formatDate = (value: string) => value && value !== '—' ? new Date(value).toLocaleDateString() : '—';
 
 interface LoanSummaryFilterOptions {
   state?: string;
@@ -455,8 +468,47 @@ export const LoanSummary: React.FC = () => {
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
-  // Sample data generation for demonstration
+  // The original report UI is retained; its former demonstration data is never
+  // rendered.  Report rows are supplied by the authorized server-side summary.
   useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const response = await apiFetch('/api/repayments/reports/loan-summary');
+        const body = await response.json();
+        if (!response.ok) throw new Error(body?.error?.message || 'Unable to load loan summary');
+        const rows = (body.data || []).map((row: Record<string, unknown>) => Object.assign(Object.create(emptyRecord), {
+          loanCode: String(row.loan_account_number || '—'), clientCode: String(row.client_code || '—'),
+          productId: String(row.product_identifier || row.product_id || '—'), productCode: String(row.product_code || '—'), productName: String(row.product_name || '—'),
+          principalAmount: Number(row.loan_amount || 0), principalOutstanding: Number(row.principal_outstanding || 0),
+          interestAmount: Number(row.total_interest ?? row.scheduled_interest ?? 0), interestOutstanding: Number(row.interest_outstanding || 0),
+          interestRate: Number(row.interest_rate || 0), processingFee: Number(row.processing_fee || 0), tenureInMonths: Number(row.tenure || 0),
+          totalInstallments: Number(row.installment_count || 0), repaymentFrequency: String(row.repayment_frequency || '—'),
+          installmentsOutstanding: Number(row.installments_outstanding || 0), loanStatus: String(row.loan_status || '—'),
+          disbursementDate: String(row.disbursement_date || ''), loanCreatedOn: String(row.application_date || ''), allocationDate: String(row.sanction_date || ''),
+          branchCode: String(row.branch_code || '—'), branchName: String(row.branch_name || '—'),
+          centerCode: String(row.center_code || '—'), centerName: String(row.center_name || '—'), foId: String(row.employee_id || '—'),
+          foName: String(row.fo_name || '—'), firstName: String(row.first_name || '—'), lastName: String(row.last_name || '—'),
+          mobileNumber: String(row.mobile_number || '—'), aadhaarNumber: String(row.aadhaar_number || '—'), voterCardNumber: String(row.voter_card_number || '—'),
+          kycId: String(row.kyc_id || '—'), kycType: String(row.kyc_type || '—'), dob: String(row.date_of_birth || ''), age: Number(row.age || 0),
+          gender: String(row.gender || '—'), maritalStatus: String(row.marital_status || '—'), caste: String(row.caste || '—'), religion: String(row.religion || '—'),
+          sourceOfIncome: String(row.occupation || '—'), totalIncome: Number(row.monthly_income || 0), totalExpense: Number(row.monthly_expense || 0),
+          annualIncome: Number(row.annual_income || 0), loanCycle: Number(row.cycle || 0),
+          principalCollected: Number(row.principal_collected || 0), interestCollected: Number(row.interest_collected || 0),
+          principalArrears: Number(row.principal_arrears || 0), interestArrears: Number(row.interest_arrears || 0), totalArrears: Number(row.total_arrears || 0),
+          netPayableAmount: Number(row.net_payable_amount || 0), disbursedAmount: Number(row.completed_disbursed || 0), modeOfDisbursement: String(row.disbursement_mode || '—'),
+          neftTransactionNumber: String(row.reference_number || '—'), lastCollDate: String(row.last_collection_date || ''),
+          lastCollAmount: Number(row.last_collection_amount || 0), lastCollectionMode: String(row.last_collection_mode || '—'),
+        })) as LoanSummaryRecord[];
+        if (!cancelled) { setRecords(rows); setFilteredRecords(rows); setTotalItems(rows.length); setTotalPages(Math.ceil(rows.length / pageSize)); }
+      } catch (cause) { if (!cancelled) setError(cause instanceof Error ? cause.message : 'Unable to load loan summary'); }
+      finally { if (!cancelled) setLoading(false); }
+    };
+    load();
+    return () => { cancelled = true; };
+    /*
     const generateSampleData = () => {
       const sampleData: LoanSummaryRecord[] = [];
       
@@ -579,6 +631,7 @@ export const LoanSummary: React.FC = () => {
     };
     
     generateSampleData();
+    */
   }, []);
 
   const handleFilter = (filters: LoanSummaryFilterOptions) => {
@@ -648,8 +701,16 @@ export const LoanSummary: React.FC = () => {
   };
 
   const handleDownload = () => {
-    // In a real application, this would generate and download a CSV or Excel file
-    alert('Download functionality will be implemented');
+    const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const csv = [
+      columns.map((column) => escape(column.label)).join(','),
+      ...filteredRecords.map((record) => columns.map((column) => escape(record[column.key as keyof LoanSummaryRecord])).join(',')),
+    ].join('\r\n');
+    const href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = href; anchor.download = 'loan-summary.csv'; anchor.click();
+    URL.revokeObjectURL(href);
+    setSuccess(`Downloaded ${filteredRecords.length} report records`);
   };
 
   const getStatusIcon = (status: string) => {
@@ -784,7 +845,7 @@ export const LoanSummary: React.FC = () => {
       render: (value: string) => (
         <div className="flex items-center space-x-1">
           <Calendar className="w-4 h-4 text-gray-400" />
-          <span>{new Date(value).toLocaleDateString()}</span>
+          <span>{formatDate(value)}</span>
         </div>
       )
     },
@@ -878,25 +939,25 @@ export const LoanSummary: React.FC = () => {
       key: 'allocationDate',
       label: 'Allocation Date',
       sortable: true,
-      render: (value: string) => new Date(value).toLocaleDateString()
+      render: (value: string) => formatDate(value)
     },
     {
       key: 'loanCreatedOn',
       label: 'Loan Created On',
       sortable: true,
-      render: (value: string) => new Date(value).toLocaleDateString()
+      render: (value: string) => formatDate(value)
     },
     {
       key: 'loanClosureDate',
       label: 'Loan Closure Date',
       sortable: true,
-      render: (value: string) => value ? new Date(value).toLocaleDateString() : '-'
+      render: (value: string) => formatDate(value)
     },
     {
       key: 'neftDate',
       label: 'NEFT Date',
       sortable: true,
-      render: (value: string) => new Date(value).toLocaleDateString()
+      render: (value: string) => formatDate(value)
     },
     {
       key: 'paymentDoneFrom',
@@ -907,7 +968,7 @@ export const LoanSummary: React.FC = () => {
       key: 'maturityDate',
       label: 'Maturity Date',
       sortable: true,
-      render: (value: string) => new Date(value).toLocaleDateString()
+      render: (value: string) => formatDate(value)
     },
     {
       key: 'insuranceFee',
@@ -944,7 +1005,7 @@ export const LoanSummary: React.FC = () => {
       key: 'dob',
       label: 'DOB',
       sortable: true,
-      render: (value: string) => new Date(value).toLocaleDateString()
+      render: (value: string) => formatDate(value)
     },
     {
       key: 'age',
@@ -1164,7 +1225,7 @@ export const LoanSummary: React.FC = () => {
       key: 'lastDueDate',
       label: 'Last Due Date',
       sortable: true,
-      render: (value: string) => new Date(value).toLocaleDateString()
+      render: (value: string) => formatDate(value)
     },
     {
       key: 'principalCollected',
@@ -1383,7 +1444,7 @@ export const LoanSummary: React.FC = () => {
             <div>
               <p className="text-sm font-medium text-gray-600 dark:text-gray-400">Total Disbursed</p>
               <p className="text-xl font-bold text-gray-900 dark:text-white">
-                ₹{records.reduce((sum, loan) => sum + loan.principalAmount, 0).toLocaleString()}
+                ₹{records.reduce((sum, loan) => sum + loan.disbursedAmount, 0).toLocaleString()}
               </p>
             </div>
           </div>

@@ -26,16 +26,17 @@ export const ProductBranchMappingPage: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const [p, b, m] = await Promise.all([productBranchMappingService.getProducts(), productBranchMappingService.getBranches(), productBranchMappingService.getMappings()]);
-        setProducts(p); setBranches(b); setMappings(m);
-      } catch { setError('Failed to load data'); }
+        const [options, m] = await Promise.all([productBranchMappingService.getOptions(), productBranchMappingService.getMappings()]);
+        setProducts(options.products.map(product => ({ ...product, category: options.productGroups.find(group => group.id === product.productGroupId)?.productGroupName || '' })));
+        setBranches(options.branches); setMappings(m);
+      } catch (reason) { setError(reason instanceof Error ? reason.message : 'Failed to load data'); }
       finally { setLoading(false); }
     };
     load();
   }, []);
 
-  const categories = Array.from(new Set(products.map(p => p.category)));
-  const filteredProducts = selectedCategory ? products.filter(p => p.category === selectedCategory) : products;
+  const categories = Array.from(new Map(products.map(p => [p.productGroupId, p.category])).entries()).map(([id, name]) => ({ id, name }));
+  const filteredProducts = selectedCategory ? products.filter(p => p.productGroupId === selectedCategory) : products;
 
   const handleProductSelect = (productId: string) => {
     setSelectedProduct(productId);
@@ -71,8 +72,21 @@ export const ProductBranchMappingPage: React.FC = () => {
     finally { setIsSaving(false); }
   };
 
+  const handleStatusChange = async (mapping: ProductBranchMapping) => {
+    try {
+      const updated = await productBranchMappingService.updateMappingStatus(mapping.id, mapping.status === 'active' ? 'inactive' : 'active');
+      setMappings(previous => previous.map(item => item.id === updated.id ? updated : item));
+      setSuccess(`Mapping ${updated.status === 'active' ? 'activated' : 'deactivated'} successfully!`);
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Failed to update mapping status'); }
+  };
+
   const toggleAvailable = (id: string) => setSelectedAvailable(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   const toggleAssigned = (id: string) => setSelectedAssigned(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  const visibleMappings = mappings.filter(mapping =>
+    (!selectedCategory || mapping.productGroupId === selectedCategory) &&
+    (!selectedProduct || mapping.productId === selectedProduct)
+  );
 
   return (
     <div className="space-y-6">
@@ -85,7 +99,7 @@ export const ProductBranchMappingPage: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Product Category</label>
             <select value={selectedCategory} onChange={e => { setSelectedCategory(e.target.value); setSelectedProduct(''); setAvailableBranches([]); setAssignedBranches([]); }} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white">
-              <option value="">Select Category</option>{categories.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value="">Select Category</option>{categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select></div>
           <div><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Product</label>
             <select value={selectedProduct} onChange={e => handleProductSelect(e.target.value)} disabled={!selectedCategory} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed">
@@ -142,15 +156,16 @@ export const ProductBranchMappingPage: React.FC = () => {
                   <td colSpan={4} className="px-6 py-8 text-center text-sm text-gray-500 dark:text-gray-400">Loading mappings…</td>
                 </tr>
               ) : (
-                mappings.map(m => (
+                visibleMappings.map(m => (
                   <tr key={m.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">{m.productName}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{m.branchName}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{new Date(m.assignedDate).toLocaleDateString()}</td>
-                    <td className="px-6 py-4 whitespace-nowrap"><span className={`inline-flex px-2 py-1 text-xs rounded-full font-medium ${m.status === 'active' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300'}`}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</span></td>
+                    <td className="px-6 py-4 whitespace-nowrap"><span className={`inline-flex px-2 py-1 text-xs rounded-full font-medium ${m.status === 'active' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300'}`}>{m.status.charAt(0).toUpperCase() + m.status.slice(1)}</span><button onClick={() => void handleStatusChange(m)} className="ml-2 text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400">{m.status === 'active' ? 'Deactivate' : 'Activate'}</button></td>
                   </tr>
-                ))
+                )) || null
               )}
+              {!loading && visibleMappings.length === 0 && <tr><td colSpan={4} className="px-6 py-8 text-center text-sm text-gray-500 dark:text-gray-400">No product-branch mappings found.</td></tr>}
             </tbody>
           </table>
         </div>

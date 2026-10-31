@@ -120,17 +120,6 @@ export const clientService = {
     return mapClient(json.data ?? json);
   },
 
-  createClient: async (formData: ClientFormData): Promise<EnhancedLoanClient> => {
-    const res = await apiFetch(BASE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(toApiPayload(formData)),
-    });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error?.message || json.message || 'Failed to create client');
-    return mapClient(json.data ?? json);
-  },
-
   updateClient: async (id: string, formData: ClientFormData): Promise<EnhancedLoanClient> => {
     const res = await apiFetch(`${BASE_URL}/${id}`, {
       method: 'PUT',

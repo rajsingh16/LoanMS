@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import { requireMasterPermission } from '../middleware/authorization.js';
 
 export function createVillagesRoutes({ pool, authenticateRequest }) {
   const router = Router();
+  router.use(authenticateRequest, requireMasterPermission('villages'));
 
   function mapVillageRow(row) {
     return {

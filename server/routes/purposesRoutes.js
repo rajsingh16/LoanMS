@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import { requireMasterPermission } from '../middleware/authorization.js';
 import { masterAuditJoin, masterAuditSelect, masterError } from '../utils/masterResponses.js';
 
 export function createPurposesRoutes({ pool, authenticateRequest, unsupportedCsvUpload, mapPurposeRow }) {
   const router = Router();
+  router.use(authenticateRequest, requireMasterPermission('purposes'));
 
   router.get('', authenticateRequest, async (_req, res) => {
     try {

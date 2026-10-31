@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import { requireMasterPermission } from '../middleware/authorization.js';
 import { masterAuditJoin, masterAuditSelect, masterError } from '../utils/masterResponses.js';
 
 export function createIfscRoutes({ pool, authenticateRequest, unsupportedCsvUpload, mapIfscRow }) {
   const router = Router();
+  router.use(authenticateRequest, requireMasterPermission('ifsc'));
 
   router.get('', authenticateRequest, async (_req, res) => {
     try {

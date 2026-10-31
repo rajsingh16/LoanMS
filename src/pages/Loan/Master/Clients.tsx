@@ -30,7 +30,6 @@ export const Clients: React.FC = () => {
   const [clients, setClients] = useState<EnhancedLoanClient[]>([]);
   const [filteredClients, setFilteredClients] = useState<EnhancedLoanClient[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAddModal, setShowAddModal] = useState(false);
   const [showCSVModal, setShowCSVModal] = useState(false);
   const [editingClient, setEditingClient] = useState<EnhancedLoanClient | null>(null);
   const [success, setSuccess] = useState<string>('');
@@ -89,24 +88,6 @@ export const Clients: React.FC = () => {
     } catch (err) {
       setError('Failed to delete client');
       console.error('Error deleting client:', err);
-    }
-  };
-
-  const handleAddClient = async (formData: ClientFormData) => {
-    try {
-      setIsSubmitting(true);
-      setError('');
-      const newClient = await clientService.createClient(formData);
-      setClients(prev => [...prev, newClient]);
-      setFilteredClients(prev => [...prev, newClient]);
-      setShowAddModal(false);
-      setSuccess('Client created successfully!');
-      setTimeout(() => setSuccess(''), 3000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create client');
-      console.error('Error creating client:', err);
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -511,23 +492,9 @@ export const Clients: React.FC = () => {
         data={filteredClients}
         title="Client Management"
         loading={loading}
-        onAdd={() => setShowAddModal(true)}
+        addable={false}
         filterComponent={filterComponent}
       />
-
-      {/* Add Client Modal */}
-      <Modal
-        isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        title="Add New Client"
-        size="xl"
-      >
-        <ClientForm
-          onSubmit={handleAddClient}
-          onCancel={() => setShowAddModal(false)}
-          isSubmitting={isSubmitting}
-        />
-      </Modal>
 
       {/* Edit Client Modal */}
       <Modal

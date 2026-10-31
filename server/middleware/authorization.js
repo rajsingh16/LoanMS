@@ -2,16 +2,40 @@ import { pool } from '../db.js';
 
 export async function getAuthorizationContext(userId) {
   const { rows } = await pool.query(
-    `SELECT up.id, lower(up.role) AS role,
-            COALESCE(json_agg(json_build_object('module', p.module, 'permission', p.permission))
-              FILTER (WHERE p.id IS NOT NULL), '[]') AS permissions
+    `SELECT up.id, lower(up.role) AS role, up.branch_id,
+            COALESCE(json_agg(DISTINCT jsonb_build_object('module', grants.module, 'permission', grants.permission))
+              FILTER (WHERE grants.module IS NOT NULL), '[]') AS permissions
      FROM user_profiles up
-     LEFT JOIN user_permissions p ON p.user_id = $1
+     LEFT JOIN roles r ON r.role_code = up.role AND r.is_active = true
+     LEFT JOIN LATERAL (
+       SELECT module, permission FROM user_permissions WHERE user_id = up.id
+       UNION
+       SELECT module, permission FROM role_permissions WHERE role_id = r.id
+     ) grants ON true
      WHERE up.id = $1 AND up.status = 'active'
-     GROUP BY up.id, up.role`,
+     GROUP BY up.id, up.role, up.branch_id`,
     [userId]
   );
   return rows[0] || null;
+}
+
+export function hasPermission(context, permission) {
+  if (!context) return false;
+  // Administrator is the application's existing explicit administrative role.
+  if (['admin', 'administrator'].includes(context.role)) return true;
+  return context.permissions.some((entry) => entry.module === 'loan' && entry.permission === permission);
+}
+
+export function requireMasterPermission(master) {
+  return (req, res, next) => {
+    const action = { GET: 'view', POST: 'create', PUT: 'update', PATCH: 'update', DELETE: 'delete' }[req.method];
+    if (!action) return res.status(403).json({ data: null, error: { message: 'Forbidden' } });
+    getAuthorizationContext(req.userId).then((context) => {
+      if (!hasPermission(context, `master.${master}.${action}`)) return res.status(403).json({ data: null, error: { message: 'Not authorized for this master-data action' } });
+      req.authz = context;
+      return next();
+    }).catch((error) => authorizationError(res, error));
+  };
 }
 
 function authorizationError(res, error) {

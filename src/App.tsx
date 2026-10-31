@@ -30,16 +30,18 @@ import { DeathCasePage } from './pages/Loan/Transaction/DeathCase';
 import { AppVerificationAdminPage } from './pages/Loan/Transaction/AppVerificationAdmin';
 import { ProductBranchMappingPage } from './pages/Loan/Transaction/ProductBranchMapping';
 import { BranchAuditPage } from './pages/Loan/Transaction/BranchAudit';
-import { OverdueDashboardPage } from './pages/Loan/Dashboard/OverdueDashboard';
-import { LoanSummary } from './pages/Loan/Reports/LoanSummary';
+import { AuthoritativeRepaymentDashboard } from './pages/Loan/Dashboard/AuthoritativeRepaymentDashboard';
+import { AuthoritativeRepaymentReport } from './pages/Loan/Reports/AuthoritativeRepaymentReport';
 import { RepaymentDetails } from './pages/Loan/Reports/RepaymentDetails';
 import { BranchDayCloseReport } from './pages/Loan/Reports/BranchDayCloseReport';
 import { EmployeeAttendanceReport } from './pages/Loan/Reports/EmployeeAttendanceReport';
 import { DeathReport } from './pages/Loan/Reports/DeathReport';
 import { InsuranceReport } from './pages/Loan/Reports/InsuranceReport';
 import { DueVsCollectionReport } from './pages/Loan/Reports/DueVsCollectionReport';
+import { LoanSummary } from './pages/Loan/Reports/LoanSummary';
 import { useSessionTimeout } from './hooks/useSessionTimeout';
 import { AdminPanel } from './pages/Admin/AdminPanel';
+import { RolePermissions } from './pages/Admin/RolePermissions';
 import { LoanApplicationDetails } from './pages/Loan/Transaction/LoanApplicationDetails';
 import LoanAccounts from '../src/pages/Loan/Transaction/LoanAccounts';
 import LoanAccountDetails from '../src/pages/Loan/Transaction/LoanAccountDetails';
@@ -130,7 +132,7 @@ function AppRoutes() {
         <Route path="loan/reports/backdated" element={<PlaceholderPage title="Backdated Report" />} />
         <Route path="loan/reports/loan-closure" element={<PlaceholderPage title="Loan Closure Report" />} />
         <Route path="loan/reports/credit-bureau" element={<PlaceholderPage title="Credit Bureau Report" />} />
-        <Route path="loan/reports/collection-details" element={<PlaceholderPage title="Collection Details Report" />} />
+        <Route path="loan/reports/collection-details" element={<AuthoritativeRepaymentReport kind="collection-details" />} />
         <Route path="loan/reports/application-verification" element={<PlaceholderPage title="Application Verification Report" />} />
         <Route path="loan/reports/center-reports" element={<PlaceholderPage title="Center Reports" />} />
         <Route path="loan/reports/demand-vs-collection" element={<PlaceholderPage title="Demand vs Collection Report" />} />
@@ -141,13 +143,13 @@ function AppRoutes() {
         <Route path="loan/reports/white-board" element={<PlaceholderPage title="White Board Report" />} />
         <Route path="loan/reports/business-opportunity-vs-actual" element={<PlaceholderPage title="Business Opportunity vs Actual Disbursement Report" />} />
         
-        <Route path="loan/dashboard/collection" element={<PlaceholderPage title="Collection Dashboard" />} />
-        <Route path="loan/dashboard/overdue" element={<OverdueDashboardPage />} />
+        <Route path="loan/dashboard/collection" element={<AuthoritativeRepaymentDashboard kind="collection" />} />
+        <Route path="loan/dashboard/overdue" element={<AuthoritativeRepaymentDashboard kind="overdue" />} />
         <Route path="loan/dashboard/funnel" element={<PlaceholderPage title="Application Funnel" />} />
         
         {/* Admin Routes */}
         <Route path="admin" element={<AdminPanel />} />
-        <Route path="admin/roles" element={<Navigate to="/admin" replace />} />
+        <Route path="admin/roles" element={<RolePermissions />} />
         
         {/* Other Module Routes */}
         <Route path="finance/master" element={<PlaceholderPage title="Finance Master" />} />

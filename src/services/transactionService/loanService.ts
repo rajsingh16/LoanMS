@@ -1,7 +1,10 @@
 import { apiFetch } from '../../lib/api';
+import { LoanAccountListItem, loanAccountService } from './loanApplicationService';
 
 export interface LoanDetail {
   id: string;
+  /** Primary key of the backing `loan_accounts` record. */
+  loanAccountId: string;
   loanCode: string;
   clientCode: string;
   customerName: string;
@@ -123,25 +126,160 @@ export interface LoanFilterOptions {
 }
 
 const BASE_URL = '/api/loans';
+const LOAN_ACCOUNT_PAGE_SIZE = 100;
+
+function asNumber(value: number | string | null | undefined) {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function asText(value: string | null | undefined) {
+  return String(value ?? '').trim();
+}
+
+function mapAccountToLoanDetail(account: LoanAccountListItem): LoanDetail {
+  const disbursedAmount = asNumber(account.total_disbursed);
+  return {
+    id: account.id,
+    loanAccountId: account.id,
+    loanCode: asText(account.loan_account_number),
+    clientCode: asText(account.client_code),
+    customerName: [account.client_first_name, account.client_last_name].filter(Boolean).join(' ').trim(),
+    customerDOB: '',
+    idProofName: '',
+    idProofNumber: '',
+    addressProofName: '',
+    addressProofNumber: '',
+    coApplicantName: '',
+    coApplicantDOB: '',
+    coApplicantIdType1: '',
+    coApplicantIdNumber1: '',
+    coApplicantIdType2: '',
+    coApplicantIdNumber2: '',
+    guarantorName: '',
+    guarantorDOB: '',
+    guarantorIdType1: '',
+    guarantorIdNumber1: '',
+    guarantorIdType2: '',
+    guarantorIdNumber2: '',
+    branch: asText(account.branch_name),
+    center: asText(account.center_name),
+    bcPartner: '',
+    disbursementDate: '',
+    coApplicantName2: '',
+    nomineeName: '',
+    spouseName: '',
+    status: asText(account.loan_status),
+    productGroup: asText(account.product_group_name),
+    productCode: '',
+    productName: asText(account.product_name),
+    healthcareOpted: false,
+    isNetOffEligible: false,
+    interestAmount: 0,
+    disbursedAmount,
+    insuranceAmount: 0,
+    interestOutstanding: 0,
+    principalOutstanding: disbursedAmount,
+    installmentsOutstanding: 0,
+    principalArrear: 0,
+    interestArrear: 0,
+    installmentsArrear: 0,
+    lender: '',
+    funder: '',
+    loanCycle: 0,
+    isUtilized: false,
+    utilCheckLatitude: 0,
+    utilCheckLongitude: 0,
+    repaymentFrequency: asText(account.repayment_frequency),
+    policyId: '',
+    preclosingAmount: 0,
+    preclosingReason: '',
+    maturityDate: '',
+    closureDate: '',
+    state: '',
+    zone: '',
+    division: '',
+    postDisbVerified: false,
+    verificationDate: '',
+    verificationRemarks: '',
+    extLoanId: '',
+    extLANNo: '',
+    extCustId: '',
+    netPayableAmount: asNumber(account.remaining_amount),
+    netOffLoanId: '',
+    netOffCollSequence: 0,
+    siApproveDate: '',
+    siRejectionReason: '',
+    siRequestDate: '',
+    siStatus: '',
+    siVendor: '',
+    insuranceId: '',
+    nextDisbursementDate: '',
+    neftDate: '',
+    isFullyDisbursed: account.disbursement_status === 'fully_disbursed',
+    totalInstallments: 0,
+    processingFee: 0,
+    tenureInMonths: asNumber(account.tenure),
+    interestRate: asNumber(account.interest_rate),
+    subPurposeId: '',
+    subPurposeName: '',
+    purposeId: '',
+    purposeName: '',
+    utilizationCheckDate: '',
+    hospiCashName: '',
+    hospiCashAmount: 0,
+    emiStartDate: '',
+    paymentMode: '',
+    paymentDoneFrom: '',
+    fo: '',
+    bankAccountType: '',
+    bankAccountNumber: '',
+    ifscCode: '',
+    bankName: '',
+    bankBranch: '',
+    healthCareAmount: 0,
+    sanctionStatus: '',
+    neftTransactionNumber: '',
+    disbursedBy: '',
+  };
+}
+
+function matchesLoanFilters(loan: LoanDetail, filters?: Partial<LoanFilterOptions>) {
+  if (!filters) return true;
+  if (filters.branch && !loan.branch.toLowerCase().includes(filters.branch.toLowerCase())) return false;
+  if (filters.center && !loan.center.toLowerCase().includes(filters.center.toLowerCase())) return false;
+  if (filters.productGroup && !loan.productGroup.toLowerCase().includes(filters.productGroup.toLowerCase())) return false;
+  if (filters.product && !loan.productName.toLowerCase().includes(filters.product.toLowerCase())) return false;
+  if (filters.businessPartner && !loan.bcPartner.toLowerCase().includes(filters.businessPartner.toLowerCase())) return false;
+  if (filters.clientCode && !loan.clientCode.toLowerCase().includes(filters.clientCode.toLowerCase())) return false;
+  if (filters.loanCode && !loan.loanCode.toLowerCase().includes(filters.loanCode.toLowerCase())) return false;
+  if (filters.status && loan.status !== filters.status) return false;
+  if (filters.sanctionStatus && loan.sanctionStatus !== filters.sanctionStatus) return false;
+  if (filters.externalLoanId && !loan.extLoanId.toLowerCase().includes(filters.externalLoanId.toLowerCase())) return false;
+  if (filters.closureDateFrom && filters.closureDateTo && !(loan.closureDate && loan.closureDate >= filters.closureDateFrom && loan.closureDate <= filters.closureDateTo)) return false;
+  if (filters.disbursementDateFrom && filters.disbursementDateTo && !(loan.disbursementDate && loan.disbursementDate >= filters.disbursementDateFrom && loan.disbursementDate <= filters.disbursementDateTo)) return false;
+  if (filters.neftDateFrom && filters.neftDateTo && !(loan.neftDate && loan.neftDate >= filters.neftDateFrom && loan.neftDate <= filters.neftDateTo)) return false;
+  return true;
+}
 
 export const loanService = {
   getAllLoans: async (filters?: Partial<LoanFilterOptions>): Promise<LoanDetail[]> => {
-    const params = new URLSearchParams();
-    if (filters) {
-      Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, String(value));
-      });
-    }
-    const url = params.toString() ? `${BASE_URL}?${params.toString()}` : BASE_URL;
-    const res = await apiFetch(url);
-    const json = await res.json();
-    return json.data ?? json;
+    const accounts: LoanAccountListItem[] = [];
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+      const result = await loanAccountService.getAccounts({ page, limit: LOAN_ACCOUNT_PAGE_SIZE });
+      accounts.push(...result.data);
+      totalPages = result.pagination.totalPages || 1;
+      page += 1;
+    } while (page <= totalPages);
+
+    return accounts.map(mapAccountToLoanDetail).filter(loan => matchesLoanFilters(loan, filters));
   },
 
   getLoanById: async (id: string): Promise<LoanDetail> => {
-    const res = await apiFetch(`${BASE_URL}/${id}`);
-    const json = await res.json();
-    return json.data ?? json;
+    return mapAccountToLoanDetail(await loanAccountService.getAccount(id));
   },
 
   updateLoan: async (id: string, formData: Partial<LoanDetail>): Promise<LoanDetail> => {

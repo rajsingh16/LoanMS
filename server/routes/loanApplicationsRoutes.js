@@ -2,7 +2,10 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'node:path';
 import { deleteLoanApplicationDocument, getLoanApplicationDocument, saveLoanApplicationDocument } from '../services/loanApplicationDocumentStorage.js';
-import { getAuthorizationContext } from '../middleware/authorization.js';
+import { getAuthorizationContext, hasPermission } from '../middleware/authorization.js';
+import { createClientRecord } from '../services/clientCreation.js';
+import { productContractualTerms, validateProductContractualTerms } from '../services/contractualRepaymentTerms.js';
+import { recordAuditEvent, requestCorrelationId } from '../services/auditService.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FREQUENCIES = new Set(['weekly', 'fortnightly', 'monthly', 'quarterly']);
@@ -40,8 +43,8 @@ function permission(permission) {
     try {
       const context = await getAuthorizationContext(req.userId);
       if (!context) return res.status(403).json({ data: null, error: { message: 'Forbidden' } });
-      const admin = ['admin', 'administrator'].includes(context.role);
-      const allowed = admin || context.permissions.some((p) => p.module === 'loan' && (p.permission === permission || p.permission === 'admin'));
+      const required = typeof permission === 'function' ? permission(req) : permission;
+      const allowed = hasPermission(context, required);
       if (!allowed) return res.status(403).json({ data: null, error: { message: 'Not authorized for loan applications' } });
       req.authz = context;
       return next();
@@ -52,9 +55,57 @@ function permission(permission) {
   };
 }
 
+// The schema records a user's branch and the assignment of a center/application
+// to a field officer.  Apply those relationships on every object lookup so an
+// application id alone is never authority to read or mutate it.
+async function applicationInScope(pool, context, applicationId) {
+  if (['admin', 'administrator'].includes(context.role)) return true;
+  if (!context.branch_id) return false;
+  const { rows } = await pool.query(
+    `SELECT a.id, a.field_officer_id, c.assigned_to
+       FROM loan_applications a
+       LEFT JOIN centers c ON c.id = a.center_id
+      WHERE a.id = $1 AND a.branch_id = $2`,
+    [applicationId, context.branch_id],
+  );
+  if (!rows.length) return false;
+  if (context.role !== 'field_officer') return true;
+  return String(rows[0].field_officer_id || '') === String(context.id)
+    || String(rows[0].assigned_to || '') === String(context.id);
+}
+
+function requireApplicationScope(req, res, next) {
+  if (!UUID.test(String(req.params.id || ''))) return errorMessage(res, 400, 'Invalid application id');
+  applicationInScope(req.loanPool, req.authz, req.params.id).then((allowed) => {
+    if (!allowed) return errorMessage(res, 403, 'You do not have access to this loan application');
+    return next();
+  }).catch((error) => { console.error('Loan application scope check failed:', error); return errorMessage(res, 500, 'Authorization check failed'); });
+}
+
+function requireLoanAccountScope(req, res, next) {
+  if (!UUID.test(String(req.params.id || ''))) return errorMessage(res, 400, 'Invalid loan account id');
+  req.loanPool.query('SELECT loan_application_id FROM loan_accounts WHERE id = $1', [req.params.id]).then(async ({ rows }) => {
+    if (!rows.length) return errorMessage(res, 404, 'Loan account not found');
+    if (!(await applicationInScope(req.loanPool, req.authz, rows[0].loan_application_id))) return errorMessage(res, 403, 'You do not have access to this loan account');
+    return next();
+  }).catch((error) => { console.error('Loan account scope check failed:', error); return errorMessage(res, 500, 'Authorization check failed'); });
+}
+
 function value(body, camel, snake = camel) { return body[camel] ?? body[snake]; }
 function errorMessage(res, status, message) { return res.status(status).json({ data: null, error: { message } }); }
-function isValidationError(error) { return /required|invalid|does not|inactive|unsupported|must be|belong|IFSC/i.test(String(error?.message || '')); }
+function validCalendarDate(value) {
+  if (value == null || value === '') return true;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return false;
+  const [year, month, day] = String(value).split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+function contractualFirstInstallmentDate(body) {
+  const date = value(body, 'contractualFirstInstallmentDate', 'contractual_first_installment_date');
+  if (!validCalendarDate(date)) throw new Error('Contractual first installment date must be a valid calendar date');
+  return date || null;
+}
+function isValidationError(error) { return /required|invalid|does not|inactive|unsupported|must be|belong|IFSC|between|effective|positive/i.test(String(error?.message || '')); }
 
 async function validateReferences(client, body) {
   const branchId = value(body, 'branchId', 'branch_id');
@@ -79,6 +130,8 @@ async function validateReferences(client, body) {
   if (!group.rowCount) throw new Error('Product group does not exist or is inactive');
   const product = await client.query("SELECT id, product_group_id FROM products WHERE id = $1 AND lower(status) = 'active'", [productId]);
   if (!product.rowCount || String(product.rows[0].product_group_id) !== String(productGroupId)) throw new Error('Product does not exist, is inactive, or does not belong to the selected product group');
+  const mapping = await client.query("SELECT id FROM product_branch_mappings WHERE product_id = $1 AND branch_id = $2 AND status = 'active'", [productId, branchId]);
+  if (!mapping.rowCount) throw new Error('The selected product is not active for the selected branch');
   if (purposeId && !(await client.query('SELECT id FROM purposes WHERE id = $1 AND lower(status) = $2', [purposeId, 'active'])).rowCount) throw new Error('Purpose does not exist or is inactive');
   if (subPurposeId) {
     const subPurpose = await client.query('SELECT id, main_purpose_id FROM purposes WHERE id = $1 AND lower(status) = $2', [subPurposeId, 'active']);
@@ -106,6 +159,70 @@ function validatePayload(body) {
   if (tenure !== undefined && tenure !== null && (!Number.isInteger(Number(tenure)) || Number(tenure) <= 0)) throw new Error('Tenure must be a positive integer');
   if (!FREQUENCIES.has(frequency)) throw new Error('A supported repayment frequency is required');
   return { amount, emi: emi == null || emi === '' ? null : Number(emi), rate: rate == null || rate === '' ? null : Number(rate), tenure: tenure == null || tenure === '' ? null : Number(tenure), frequency: frequency || null };
+}
+
+const money = (amount) => Math.round((Number(amount) + Number.EPSILON) * 100) / 100;
+const configuredNumber = (config, names, fallback = null) => {
+  for (const name of names) {
+    const parsed = Number(config?.[name]);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+};
+const configuredText = (config, names, fallback = '') => {
+  for (const name of names) if (config?.[name] != null && String(config[name]).trim()) return String(config[name]).trim();
+  return fallback;
+};
+
+function productTerms(product, body) {
+  const config = product.data || {};
+  const minAmount = configuredNumber(config, ['minLoanAmount', 'minimumLoanAmount', 'minimum_amount'], 0);
+  const maxAmount = configuredNumber(config, ['maxLoanAmount', 'maximumLoanAmount', 'maximum_amount', 'loanAmount'], null);
+  const defaultTenure = configuredNumber(config, ['defaultTenure', 'defaultTenureInMonths', 'tenureInMonths'], null);
+  const minTenure = configuredNumber(config, ['minTenure', 'minimumTenure', 'minTenureInMonths'], defaultTenure);
+  const maxTenure = configuredNumber(config, ['maxTenure', 'maximumTenure', 'maxTenureInMonths'], defaultTenure);
+  const rate = configuredNumber(config, ['interestRate', 'annualInterestRate'], 0);
+  const frequency = configuredText(config, ['repaymentFrequency', 'principalRepaymentFrequency', 'interestRepaymentFrequency'], 'monthly').toLowerCase();
+  const calculationMethod = configuredText(config, ['interestCalculationMethod', 'interestCalculationOn', 'emiCalculationType'], 'reducing_balance').toLowerCase();
+  const fixedEmi = configuredNumber(config, ['fixedEmiAmount', 'emiAmount'], null);
+  const processingFee = configuredNumber(config, ['processingFee', 'processingFees', 'lpfValue'], 0);
+  const insuranceCharge = configuredNumber(config, ['insuranceCharge', 'insuranceCharges'], 0);
+  const otherCharges = configuredNumber(config, ['otherCharges', 'docChargeValue'], 0);
+  const amount = Number(value(body, 'loanAmount', 'loan_amount'));
+  const tenure = Number(value(body, 'tenure')) || defaultTenure;
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Loan amount must be positive');
+  if (amount < minAmount || (maxAmount != null && amount > maxAmount)) throw new Error(`Loan amount must be between ${minAmount} and ${maxAmount ?? 'the configured maximum'}`);
+  if (!Number.isInteger(tenure) || tenure <= 0 || (minTenure != null && tenure < minTenure) || (maxTenure != null && tenure > maxTenure)) throw new Error(`Tenure must be between ${minTenure ?? 1} and ${maxTenure ?? 'the configured maximum'}`);
+  if (!FREQUENCIES.has(frequency)) throw new Error('Product has an unsupported repayment frequency');
+  const periodsPerYear = { weekly: 52, fortnightly: 26, monthly: 12, quarterly: 4 }[frequency];
+  const installments = Math.max(1, Math.round(tenure * periodsPerYear / 12));
+  const periodicRate = rate / 100 / periodsPerYear;
+  let installment;
+  if (fixedEmi != null && fixedEmi > 0 && !config.flexibleEmi) installment = fixedEmi;
+  else if (periodicRate === 0) installment = amount / installments;
+  else if (calculationMethod.includes('flat')) installment = (amount + amount * (rate / 100) * (tenure / 12)) / installments;
+  else installment = amount * periodicRate * Math.pow(1 + periodicRate, installments) / (Math.pow(1 + periodicRate, installments) - 1);
+  installment = money(installment);
+  let balance = money(amount); const schedule = []; const start = new Date(`${value(body, 'applicationDate', 'application_date') || new Date().toISOString().slice(0, 10)}T00:00:00`);
+  for (let index = 1; index <= installments; index += 1) {
+    const interest = calculationMethod.includes('flat') ? money(amount * (rate / 100) / periodsPerYear) : money(balance * periodicRate);
+    let payment = installment; let principal = money(payment - interest);
+    if (index === installments || principal > balance) { principal = balance; payment = money(principal + interest); }
+    balance = money(Math.max(0, balance - principal));
+    const due = new Date(start); if (frequency === 'weekly') due.setDate(due.getDate() + index * 7); else if (frequency === 'fortnightly') due.setDate(due.getDate() + index * 14); else if (frequency === 'quarterly') due.setMonth(due.getMonth() + index * 3); else due.setMonth(due.getMonth() + index);
+    schedule.push({ installmentNumber: index, dueDate: due.toISOString().slice(0, 10), openingPrincipal: money(balance + principal), principalComponent: principal, interestComponent: interest, installmentAmount: payment, closingPrincipal: balance });
+  }
+  const totalRepayment = money(schedule.reduce((sum, row) => sum + row.installmentAmount, 0));
+  return { minAmount, maxAmount, minTenure, maxTenure, defaultTenure, interestRate: rate, interestCalculationMethod: calculationMethod, repaymentFrequency: frequency, emiAmount: schedule[0]?.installmentAmount || installment, processingFee: money(processingFee), insuranceCharge: money(insuranceCharge), otherCharges: money(otherCharges), totalInterest: money(schedule.reduce((sum, row) => sum + row.interestComponent, 0)), totalPayableAmount: money(totalRepayment + processingFee + insuranceCharge + otherCharges), schedule, snapshot: { productId: product.id, productCode: product.product_code, productName: product.product_name, productGroupId: product.product_group_id, configuredAt: new Date().toISOString(), minAmount, maxAmount, minTenure, maxTenure, defaultTenure, interestRate: rate, interestCalculationMethod: calculationMethod, repaymentFrequency: frequency, fixedEmi, processingFee, insuranceCharge, otherCharges, ...productContractualTerms(config) } };
+}
+
+async function authoritativeTerms(client, refs, body) {
+  const { rows } = await client.query('SELECT id, product_code, product_name, product_group_id, data, status FROM products WHERE id = $1 FOR SHARE', [refs.productId]);
+  if (!rows.length || String(rows[0].product_group_id) !== String(refs.productGroupId) || String(rows[0].status).toLowerCase() !== 'active') throw new Error('Product does not exist, is inactive, or does not belong to the selected product group');
+  const config = rows[0].data || {}; const today = value(body, 'applicationDate', 'application_date') || new Date().toISOString().slice(0, 10);
+  const starts = configuredText(config, ['effectiveStartDate']); const ends = configuredText(config, ['effectiveEndDate']);
+  if ((starts && today < starts) || (ends && today > ends)) throw new Error('Product is not effective for the application date');
+  return productTerms(rows[0], body);
 }
 
 function childRows(body) {
@@ -172,10 +289,12 @@ async function updateManagedChildren(client, applicationId, body, userId) {
 }
 
 async function loadDetail(client, id) {
-  const main = await client.query(`SELECT a.id, a.application_number, a.application_date, a.client_id, a.branch_id, a.center_id, a.product_group_id, a.product_id, a.purpose_id, a.sub_purpose_id, a.is_top_up, a.loan_amount, a.emi_amount, a.interest_rate, a.tenure, a.repayment_frequency, a.application_status, a.document_verification_status, a.sanction_status, a.sanction_amount, a.sanction_date, a.sanction_authority, a.sanction_remarks, a.rejection_reason, a.rejection_remarks, a.rejected_by, a.rejection_date, a.remarks, a.field_officer_id, a.created_by, a.updated_by, a.created_at, a.updated_at, c.client_id AS client_code, c.first_name, c.last_name, c.aadhaar_number, c.voter_card_number, c.kyc_type, c.kyc_id, c.date_of_birth, c.age, c.gender, c.father_name, c.mother_name, c.mobile_number, c.marital_status, c.qualification, c.language, c.caste, c.religion, c.occupation, c.land_holding, c.annual_income, c.monthly_income, c.monthly_expense, c.monthly_obligation, c.household_income, b.branch_code, b.branch_name, ce.center_code, ce.center_name, pg.product_group_name, p.product_name, pu.purpose_name, sp.purpose_name AS sub_purpose_name, u.first_name AS officer_first_name, u.last_name AS officer_last_name FROM loan_applications a JOIN clients c ON c.id=a.client_id JOIN branches b ON b.id=a.branch_id JOIN centers ce ON ce.id=a.center_id JOIN product_groups pg ON pg.id=a.product_group_id JOIN products p ON p.id=a.product_id LEFT JOIN purposes pu ON pu.id=a.purpose_id LEFT JOIN purposes sp ON sp.id=a.sub_purpose_id LEFT JOIN user_profiles u ON u.id=a.field_officer_id WHERE a.id=$1`, [id]);
+  const main = await client.query(`SELECT a.id, a.application_number, a.application_date, a.client_id, a.branch_id, a.center_id, a.product_group_id, a.product_id, a.purpose_id, a.sub_purpose_id, a.is_top_up, a.loan_amount, a.emi_amount, a.interest_rate, a.tenure, a.repayment_frequency, a.product_terms_snapshot, a.total_interest, a.total_payable_amount, a.processing_fee, a.insurance_charge, a.other_charges, a.repayment_schedule, a.application_status, a.document_verification_status, a.sanction_status, a.sanction_amount, a.sanction_date, a.sanction_authority, a.sanction_remarks, a.rejection_reason, a.rejection_remarks, a.rejected_by, a.rejection_date, a.remarks, a.field_officer_id, a.created_by, a.updated_by, a.created_at, a.updated_at, c.client_id AS client_code, c.first_name, c.last_name, c.aadhaar_number, c.voter_card_number, c.kyc_type, c.kyc_id, c.date_of_birth, c.age, c.gender, c.father_name, c.mother_name, c.mobile_number, c.marital_status, c.qualification, c.language, c.caste, c.religion, c.occupation, c.land_holding, c.annual_income, c.monthly_income, c.monthly_expense, c.monthly_obligation, c.household_income, b.branch_code, b.branch_name, ce.center_code, ce.center_name, pg.product_group_name, p.product_name, pu.purpose_name, sp.purpose_name AS sub_purpose_name, u.first_name AS officer_first_name, u.last_name AS officer_last_name FROM loan_applications a JOIN clients c ON c.id=a.client_id JOIN branches b ON b.id=a.branch_id JOIN centers ce ON ce.id=a.center_id JOIN product_groups pg ON pg.id=a.product_group_id JOIN products p ON p.id=a.product_id LEFT JOIN purposes pu ON pu.id=a.purpose_id LEFT JOIN purposes sp ON sp.id=a.sub_purpose_id LEFT JOIN user_profiles u ON u.id=a.field_officer_id WHERE a.id=$1`, [id]);
   if (!main.rowCount) return null;
   const row = main.rows[0];
-  const [addresses, familyMembers, bankAccounts, documents
+  const contractualDate = await client.query('SELECT contractual_first_installment_date FROM loan_applications WHERE id=$1', [id]);
+  row.contractual_first_installment_date = contractualDate.rows[0]?.contractual_first_installment_date || null;
+  const [addresses, familyMembers, bankAccounts, documents, creditBureauChecks
   ] = await Promise.all([
     client.query(
       `
@@ -225,13 +344,32 @@ async function loadDetail(client, id) {
       `,
       [id]
     ),
+    client.query(
+      `SELECT bureau_provider, check_status, bureau_result, credit_score, is_test, checked_at, created_at
+         FROM credit_bureau_checks WHERE loan_application_id = $1 ORDER BY created_at DESC`,
+      [id]
+    ),
   ]);
-  return { ...row, addresses: addresses.rows, familyMembers: familyMembers.rows, bankAccounts: bankAccounts.rows, documents: documents.rows };
+  return { ...row, addresses: addresses.rows, familyMembers: familyMembers.rows, bankAccounts: bankAccounts.rows, documents: documents.rows, creditBureauChecks: creditBureauChecks.rows };
 }
 
 export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   const router = Router();
-  router.post('/:id/documents', authenticateRequest, permission('write'), runDocumentUpload, async (req, res) => {
+  router.use((req, _res, next) => { req.loanPool = pool; next(); });
+  router.post('/calculate-terms', authenticateRequest, permission('application.create'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+      const productGroupId = value(req.body || {}, 'productGroupId', 'product_group_id');
+      const productId = value(req.body || {}, 'productId', 'product_id');
+      if (!UUID.test(String(productGroupId || '')) || !UUID.test(String(productId || ''))) throw new Error('Product group and product are required');
+      const group = await client.query("SELECT id FROM product_groups WHERE id = $1 AND lower(status) = 'active'", [productGroupId]);
+      if (!group.rowCount) throw new Error('Product group does not exist or is inactive');
+      const refs = { productGroupId, productId };
+      const terms = await authoritativeTerms(client, refs, req.body || {});
+      return res.json({ data: terms, error: null });
+    } catch (error) { return errorMessage(res, 400, error.message || 'Unable to calculate loan terms'); } finally { client.release(); }
+  });
+  router.post('/:id/documents', authenticateRequest, permission('application.documents.manage'), requireApplicationScope, runDocumentUpload, async (req, res) => {
     if (!UUID.test(req.params.id)) return errorMessage(res, 400, 'Invalid application id');
     const documentType = String(req.body?.documentType || '').trim();
     if (!DOCUMENT_TYPES.has(documentType)) return errorMessage(res, 400, 'Select a valid document type');
@@ -264,7 +402,7 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
     }
   });
   
-  router.get('/field-officers', authenticateRequest, permission('read'), async (_req, res) => {
+  router.get('/field-officers', authenticateRequest, permission('application.create'), async (_req, res) => {
     try {
       const { rows } = await pool.query("SELECT id, first_name, last_name, employee_id FROM user_profiles WHERE lower(role) = 'field_officer' AND status = 'active' ORDER BY first_name, last_name");
       return res.json({ data: rows, error: null });
@@ -273,7 +411,7 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
       return errorMessage(res, 500, 'Failed to load field officers');
     }
   });
-  router.get('/:id/documents/:documentId', authenticateRequest, permission('read'), async (req, res) => {
+  router.get('/:id/documents/:documentId', authenticateRequest, permission('application.documents.view'), requireApplicationScope, async (req, res) => {
     if (!UUID.test(req.params.id) || !UUID.test(req.params.documentId)) return errorMessage(res, 400, 'Invalid application or document id');
     try {
       const { rows } = await pool.query('SELECT storage_key,file_name,mime_type FROM loan_application_documents WHERE id=$1 AND loan_application_id=$2', [req.params.documentId, req.params.id]);
@@ -298,7 +436,7 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.get(
     '/accounts',
     authenticateRequest,
-    permission('read'),
+    permission('application.view'),
     async (req, res) => {
       try {
         const allowedLoanStatuses = [
@@ -358,6 +496,16 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
             OR c.first_name ILIKE ${searchParam}
             OR c.last_name ILIKE ${searchParam}
           )`);
+        }
+
+        if (!['admin', 'administrator'].includes(req.authz.role)) {
+          if (!req.authz.branch_id) return errorMessage(res, 403, 'No authorized branch is assigned');
+          params.push(req.authz.branch_id);
+          where.push(`la.branch_id = $${params.length}`);
+          if (req.authz.role === 'field_officer') {
+            params.push(req.authz.id);
+            where.push(`(a.field_officer_id = $${params.length} OR ce.assigned_to = $${params.length})`);
+          }
         }
 
         const whereSql = where.length
@@ -504,7 +652,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.get(
     '/accounts/:id',
     authenticateRequest,
-    permission('read'),
+    permission('application.view'),
+    requireLoanAccountScope,
     async (req, res) => {
       const { id } = req.params;
 
@@ -629,7 +778,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.post(
     '/accounts/:id/disbursements',
     authenticateRequest,
-    permission('write'),
+    permission('application.disburse'),
+    requireLoanAccountScope,
     async (req, res) => {
       const loanId = req.params.id;
       const {
@@ -874,7 +1024,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.put(
     '/accounts/:id/disbursements/:disbursementId/status',
     authenticateRequest,
-    permission('write'),
+    permission('application.disburse'),
+    requireLoanAccountScope,
     async (req, res) => {
       const { id: loanId, disbursementId } = req.params;
       const { status } = req.body || {};
@@ -904,7 +1055,7 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
         // endpoint and serializes all changes for the same loan.
         const accountResult = await client.query(
           `
-            SELECT id, loan_amount, loan_status
+            SELECT id, loan_amount, loan_status, contractual_repayment_terms
             FROM loan_accounts
             WHERE id = $1
             FOR UPDATE
@@ -962,6 +1113,12 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
         }
 
         if (status === 'completed') {
+          const scheduleExists = await client.query('SELECT 1 FROM loan_repayment_schedules WHERE loan_id=$1 LIMIT 1 FOR KEY SHARE', [loanId]);
+          if (scheduleExists.rowCount && account.contractual_repayment_terms?.subsequentDisbursementTreatment === 'prohibit_after_schedule') {
+            await client.query('ROLLBACK');
+            transactionStarted = false;
+            return errorMessage(res, 409, 'This contract prohibits further completed disbursements after schedule generation');
+          }
           // Defensive validation in case data was modified outside this API.
           const totalsResult = await client.query(
             `
@@ -1034,7 +1191,7 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
             UPDATE loan_accounts
             SET disbursement_status = $1,
                 loan_status = CASE
-                  WHEN $2 > 0
+                  WHEN $2::numeric > 0
                     AND loan_status = 'pending_disbursement'
                     THEN 'active'
                   ELSE loan_status
@@ -1063,7 +1220,12 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
           await client.query('ROLLBACK').catch(() => {});
         }
 
-        console.error('Disbursement status update failed:', error);
+        console.error('Disbursement status update failed:', {
+          message: error instanceof Error ? error.message : String(error),
+          code: error?.code,
+          detail: error?.detail,
+          stack: error instanceof Error ? error.stack : undefined,
+        });
 
         return errorMessage(
           res,
@@ -1077,9 +1239,59 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   );
 
 
+  // Reporting is aggregated in PostgreSQL, not reconstructed from list results.
+  // `loan_amount` is the requested amount; sanctioned/disbursed amounts are
+  // intentionally not substituted for it in application reporting.
+  router.get('/dashboard', authenticateRequest, permission('application.view'), async (req, res) => {
+    try {
+      const { startDate, endDate, branchId, productId, officerId } = req.query;
+      if (![startDate, endDate].every(validCalendarDate) || (startDate && endDate && startDate > endDate)) {
+        return errorMessage(res, 400, 'Use valid startDate and endDate values (YYYY-MM-DD)');
+      }
+      for (const id of [branchId, productId, officerId]) {
+        if (id && !UUID.test(String(id))) return errorMessage(res, 400, 'Invalid report filter');
+      }
+
+      const params = [];
+      const where = [];
+      const add = (sql, value) => { params.push(value); where.push(sql.replace('?', `$${params.length}`)); };
+      // Application summaries, amounts, and grouping use the creation date.
+      // Approval/rejection trends below use their actual decision timestamps.
+      if (startDate) add('a.created_at >= ?::date', startDate);
+      if (endDate) add("a.created_at < (?::date + INTERVAL '1 day')", endDate);
+      if (branchId) add('a.branch_id = ?', branchId);
+      if (productId) add('a.product_id = ?', productId);
+      if (officerId) add('a.field_officer_id = ?', officerId);
+      if (!['admin', 'administrator'].includes(req.authz.role)) {
+        if (!req.authz.branch_id) return errorMessage(res, 403, 'No authorized branch is assigned');
+        add('a.branch_id = ?', req.authz.branch_id);
+        if (req.authz.role === 'field_officer') {
+          params.push(req.authz.id);
+          where.push(`(a.field_officer_id = $${params.length} OR ce.assigned_to = $${params.length})`);
+        }
+      }
+      const filterSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      const scoped = `FROM loan_applications a LEFT JOIN centers ce ON ce.id = a.center_id LEFT JOIN branches b ON b.id = a.branch_id LEFT JOIN products p ON p.id = a.product_id LEFT JOIN user_profiles u ON u.id = a.field_officer_id ${filterSql}`;
+      const toRows = async (query) => (await pool.query(query, params)).rows;
+      const [summaryRows, branchRows, productRows, officerRows, createdTrend, approvalTrend, rejectionTrend] = await Promise.all([
+        toRows(`SELECT count(*)::int AS total, count(*) FILTER (WHERE a.application_status = 'draft')::int AS draft, count(*) FILTER (WHERE a.application_status = 'submitted')::int AS submitted, count(*) FILTER (WHERE a.application_status = 'under_review')::int AS under_review, count(*) FILTER (WHERE a.application_status = 'approved')::int AS approved, count(*) FILTER (WHERE a.application_status = 'rejected')::int AS rejected, count(*) FILTER (WHERE a.document_verification_status = 'pending')::int AS pending_document_verification, COALESCE(sum(a.loan_amount), 0)::text AS requested_amount, COALESCE(sum(a.loan_amount) FILTER (WHERE a.application_status = 'submitted'), 0)::text AS submitted_amount, COALESCE(sum(a.loan_amount) FILTER (WHERE a.application_status = 'under_review'), 0)::text AS under_review_amount, COALESCE(sum(a.loan_amount) FILTER (WHERE a.application_status = 'approved'), 0)::text AS approved_amount, COALESCE(sum(a.loan_amount) FILTER (WHERE a.application_status = 'rejected'), 0)::text AS rejected_amount ${scoped}`),
+        toRows(`SELECT b.id::text AS id, COALESCE(b.branch_name, 'Unassigned branch') AS label, count(*)::int AS application_count, COALESCE(sum(a.loan_amount), 0)::text AS requested_amount ${scoped} GROUP BY b.id, b.branch_name ORDER BY application_count DESC, label`),
+        toRows(`SELECT p.id::text AS id, COALESCE(p.product_name, 'Unassigned product') AS label, count(*)::int AS application_count, COALESCE(sum(a.loan_amount), 0)::text AS requested_amount ${scoped} GROUP BY p.id, p.product_name ORDER BY application_count DESC, label`),
+        toRows(`SELECT u.id::text AS id, COALESCE(NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), ''), 'Unassigned officer') AS label, count(*)::int AS application_count, COALESCE(sum(a.loan_amount), 0)::text AS requested_amount ${scoped} GROUP BY u.id, u.first_name, u.last_name ORDER BY application_count DESC, label`),
+        toRows(`SELECT to_char(date_trunc('month', a.created_at AT TIME ZONE 'UTC'), 'YYYY-MM') AS month, count(*)::int AS count ${scoped} GROUP BY 1 ORDER BY 1`),
+        toRows(`SELECT to_char(date_trunc('month', a.sanction_date::timestamp), 'YYYY-MM') AS month, count(*)::int AS count ${scoped} ${where.length ? 'AND' : 'WHERE'} a.application_status = 'approved' AND a.sanction_date IS NOT NULL GROUP BY 1 ORDER BY 1`),
+        toRows(`SELECT to_char(date_trunc('month', a.rejection_date AT TIME ZONE 'UTC'), 'YYYY-MM') AS month, count(*)::int AS count ${scoped} ${where.length ? 'AND' : 'WHERE'} a.application_status = 'rejected' AND a.rejection_date IS NOT NULL GROUP BY 1 ORDER BY 1`),
+      ]);
+      return res.json({ data: { summary: summaryRows[0], distributions: { branches: branchRows, products: productRows, officers: officerRows }, trends: { created: createdTrend, approved: approvalTrend, rejected: rejectionTrend } }, error: null });
+    } catch (error) {
+      console.error('Application dashboard failed:', error);
+      return errorMessage(res, 500, 'Failed to load application dashboard');
+    }
+  });
+
   // This small lookup lets the application screen replace account creation with
   // a stable view action without inferring account state from a list search.
-  router.get('/:id/loan-account', authenticateRequest, permission('read'), async (req, res) => {
+  router.get('/:id/loan-account', authenticateRequest, permission('application.view'), requireApplicationScope, async (req, res) => {
     if (!UUID.test(req.params.id)) return errorMessage(res, 400, 'Invalid application id');
     try {
       const { rows } = await pool.query(
@@ -1093,24 +1305,56 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
     }
   });
 
-  router.get('/:id', authenticateRequest, permission('read'), async (req, res) => {
+  router.get('/:id', authenticateRequest, permission('application.view'), requireApplicationScope, async (req, res) => {
     try { if (!UUID.test(req.params.id)) return errorMessage(res, 400, 'Invalid application id'); const data = await loadDetail(pool, req.params.id); if (!data) return errorMessage(res, 404, 'Loan application not found'); return res.json({ data, error: null }); } catch (e) { console.error(e); return errorMessage(res, 500, 'Failed to load loan application'); }
   });
-  router.get('', authenticateRequest, permission('read'), async (req, res) => {
+  router.get('/:id/history', authenticateRequest, permission('application.history.view'), requireApplicationScope, async (req, res) => {
+    try {
+      if (!UUID.test(req.params.id)) return errorMessage(res, 400, 'Invalid application id');
+      const page = Number(req.query.page || 1); const limit = Number(req.query.limit || 25);
+      if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > 100) return errorMessage(res, 400, 'Invalid pagination');
+      const exists = await pool.query('SELECT id FROM loan_applications WHERE id = $1', [req.params.id]);
+      if (!exists.rowCount) return errorMessage(res, 404, 'Loan application not found');
+      const offset = (page - 1) * limit;
+      const result = await pool.query(
+        `SELECT e.id, e.event_type, e.occurred_at, e.previous_status, e.new_status, e.previous_values, e.new_values, e.remarks, e.outcome, e.metadata,
+                COALESCE(NULLIF(trim(concat_ws(' ', u.first_name, u.last_name)), ''), 'System') AS actor_name
+         FROM audit_events e LEFT JOIN user_profiles u ON u.id = e.actor_user_id
+         WHERE e.entity_type = 'loan_application' AND e.entity_id = $1
+         ORDER BY e.occurred_at ASC, e.id ASC LIMIT $2 OFFSET $3`, [req.params.id, limit, offset]);
+      const count = await pool.query("SELECT count(*)::int AS total FROM audit_events WHERE entity_type = 'loan_application' AND entity_id = $1", [req.params.id]);
+      return res.json({ data: result.rows, pagination: { page, limit, total: count.rows[0].total, totalPages: Math.ceil(count.rows[0].total / limit) }, error: null });
+    } catch (e) { console.error('Loan application history failed:', e); return errorMessage(res, 500, 'Failed to load application history'); }
+  });
+  router.get('', authenticateRequest, permission('application.view'), async (req, res) => {
     try {
       const params = []; const where = [];
       if (req.query.status) { params.push(req.query.status); where.push(`a.application_status=$${params.length}`); }
       if (req.query.search) { params.push(`%${req.query.search}%`); where.push(`(a.application_number ILIKE $${params.length} OR c.client_id ILIKE $${params.length} OR c.aadhaar_number ILIKE $${params.length})`); }
+      if (!['admin', 'administrator'].includes(req.authz.role)) {
+        if (!req.authz.branch_id) return errorMessage(res, 403, 'No authorized branch is assigned');
+        params.push(req.authz.branch_id); where.push(`a.branch_id=$${params.length}`);
+        if (req.authz.role === 'field_officer') { params.push(req.authz.id); where.push(`(a.field_officer_id=$${params.length} OR ce.assigned_to=$${params.length})`); }
+      }
       const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 200); params.push(limit); const limitParam = `$${params.length}`;
       const { rows } = await pool.query(`SELECT a.id,a.application_number,a.application_date,a.application_status,a.document_verification_status,a.sanction_status,a.loan_amount,a.emi_amount,a.interest_rate,a.tenure,a.repayment_frequency,c.client_id,c.first_name,c.last_name,b.branch_code,b.branch_name,ce.center_code,ce.center_name,pg.product_group_name,p.product_name,pu.purpose_name FROM loan_applications a JOIN clients c ON c.id=a.client_id JOIN branches b ON b.id=a.branch_id JOIN centers ce ON ce.id=a.center_id JOIN product_groups pg ON pg.id=a.product_group_id JOIN products p ON p.id=a.product_id LEFT JOIN purposes pu ON pu.id=a.purpose_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY a.created_at DESC LIMIT ${limitParam}`, params);
       return res.json({ data: rows, error: null });
     } catch (e) { console.error(e); return errorMessage(res, 500, 'Failed to load loan applications'); }
   });
   
-  router.post('', authenticateRequest, permission('write'), async (req, res) => {
+  router.post('', authenticateRequest, permission('application.create'), async (req, res) => {
     const client = await pool.connect();
     try {
-      const body = req.body || {}; await client.query('BEGIN'); const refs = await validateReferences(client, body); const numeric = validatePayload(body);
+      const body = req.body || {}; const firstInstallmentDate = contractualFirstInstallmentDate(body); await client.query('BEGIN');
+      if (body.clientMode === 'new') {
+        const createdClient = await createClientRecord(client, body.newClient, req.userId);
+        body.clientId = createdClient.id;
+      }
+      const refs = await validateReferences(client, body);
+      if (!['admin', 'administrator'].includes(req.authz.role) && (!req.authz.branch_id || String(refs.branchId) !== String(req.authz.branch_id))) {
+        throw new Error('You may only create applications in your assigned branch');
+      }
+      const terms = await authoritativeTerms(client, refs, body);
       const inserted = await client.query(`
         INSERT INTO loan_applications 
         (
@@ -1127,10 +1371,12 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
           interest_rate,
           tenure,
           repayment_frequency,
+          product_terms_snapshot,total_interest,total_payable_amount,processing_fee,insurance_charge,other_charges,repayment_schedule,
           application_status,
           remarks,
           field_officer_id,
-          created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17) RETURNING id`, [refs.clientId,refs.branchId,refs.centerId,refs.productGroupId,refs.productId,refs.purposeId,refs.subPurposeId,!!value(body,'isTopUp','is_top_up'),numeric.amount,numeric.emi,numeric.rate,numeric.tenure,numeric.frequency, 'draft',value(body,'remarks') || null,refs.officerId,req.userId]);
+          created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$23,$24) RETURNING id`, [refs.clientId,refs.branchId,refs.centerId,refs.productGroupId,refs.productId,refs.purposeId,refs.subPurposeId,!!value(body,'isTopUp','is_top_up'),terms.snapshot ? Number(value(body,'loanAmount','loan_amount')) : null,terms.emiAmount,terms.interestRate,Number(value(body,'tenure')) || terms.defaultTenure,terms.repaymentFrequency,JSON.stringify(terms.snapshot),terms.totalInterest,terms.totalPayableAmount,terms.processingFee,terms.insuranceCharge,terms.otherCharges,JSON.stringify(terms.schedule), 'draft',value(body,'remarks') || null,refs.officerId,req.userId]);
+          if (firstInstallmentDate) await client.query('UPDATE loan_applications SET contractual_first_installment_date=$1 WHERE id=$2', [firstInstallmentDate, inserted.rows[0].id]);
           await client.query(
             `
               INSERT INTO loan_application_status_history
@@ -1151,13 +1397,16 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
               req.userId,
             ]
           );
-      await insertChildren(client, inserted.rows[0].id, body, req.userId); const data = await loadDetail(client, inserted.rows[0].id); await client.query('COMMIT'); return res.status(201).json({ data, error: null });
-    } catch (e) { await client.query('ROLLBACK'); console.error(e); const status = e.code === '23505' ? 409 : (isValidationError(e) || e.code === '22P02' ? 400 : 500); const message = status === 400 ? e.message : status === 409 ? 'Conflicting loan application data' : 'Failed to create loan application'; return errorMessage(res, status, message); } finally { client.release(); }
+      await insertChildren(client, inserted.rows[0].id, body, req.userId);
+      await recordAuditEvent(client, { entityType: 'loan_application', entityId: inserted.rows[0].id, eventType: 'loan_application_created', actorUserId: req.userId, newStatus: 'draft', newValues: { loanAmount: Number(value(body, 'loanAmount', 'loan_amount')), productId: refs.productId, clientId: refs.clientId, repaymentFrequency: terms.repaymentFrequency }, remarks: value(body, 'remarks'), correlationId: requestCorrelationId(req) });
+      const data = await loadDetail(client, inserted.rows[0].id); await client.query('COMMIT'); return res.status(201).json({ data, error: null });
+    } catch (e) { await client.query('ROLLBACK'); console.error(e); const status = e.code === '23505' ? 409 : (isValidationError(e) || /Missing required client fields|date of birth/i.test(e.message) || e.code === '22P02' ? 400 : 500); const message = status === 400 ? e.message : status === 409 ? e.message || 'Conflicting loan application data' : 'Failed to create loan application'; return errorMessage(res, status, message); } finally { client.release(); }
   });
   router.put(
     '/:id',
     authenticateRequest,
-    permission('write'),
+    permission('application.draft.edit'),
+    requireApplicationScope,
     async (req, res) => {
       const applicationId = req.params.id;
   
@@ -1169,13 +1418,14 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   
       try {
         const body = req.body || {};
+        const firstInstallmentDate = contractualFirstInstallmentDate(body);
   
         await client.query('BEGIN');
   
         // Make sure the application exists
         const existing = await client.query(
           `
-          SELECT id, application_status
+          SELECT id, application_status, loan_amount, emi_amount, interest_rate, tenure, repayment_frequency, remarks, field_officer_id
           FROM loan_applications
           WHERE id = $1
           FOR UPDATE
@@ -1203,7 +1453,7 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
         const refs = await validateReferences(client, body);
   
         // Validate loan amount, EMI, interest, tenure, frequency
-        const numeric = validatePayload(body);
+        const terms = await authoritativeTerms(client, refs, body);
   
         // Update main loan application
         await client.query(
@@ -1227,11 +1477,13 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
             interest_rate = $12,
             tenure = $13,
             repayment_frequency = $14,
-            remarks = $15,
-            field_officer_id = $16,
-            updated_by = $17,
+            product_terms_snapshot = $15, total_interest = $16, total_payable_amount = $17,
+            processing_fee = $18, insurance_charge = $19, other_charges = $20, repayment_schedule = $21,
+            remarks = $22,
+            field_officer_id = $23,
+            updated_by = $24,
             updated_at = now()
-          WHERE id = $18
+          WHERE id = $25
           `,
           [
             value(body, 'applicationDate', 'application_date') || null,
@@ -1243,11 +1495,13 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
             refs.purposeId,
             refs.subPurposeId,
             !!value(body, 'isTopUp', 'is_top_up'),
-            numeric.amount,
-            numeric.emi,
-            numeric.rate,
-            numeric.tenure,
-            numeric.frequency,
+            Number(value(body, 'loanAmount', 'loan_amount')),
+            terms.emiAmount,
+            terms.interestRate,
+            Number(value(body, 'tenure')) || terms.defaultTenure,
+            terms.repaymentFrequency,
+            JSON.stringify(terms.snapshot), terms.totalInterest, terms.totalPayableAmount,
+            terms.processingFee, terms.insuranceCharge, terms.otherCharges, JSON.stringify(terms.schedule),
             value(body, 'remarks') || null,
             refs.officerId,
             req.userId,
@@ -1255,6 +1509,10 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
           ]
         );
   
+        if (Object.hasOwn(body, 'contractualFirstInstallmentDate') || Object.hasOwn(body, 'contractual_first_installment_date')) {
+          await client.query('UPDATE loan_applications SET contractual_first_installment_date=$1 WHERE id=$2', [firstInstallmentDate, applicationId]);
+        }
+
         // Update existing + insert new child records
         // without touching uploaded documents.
         await updateManagedChildren(
@@ -1263,6 +1521,10 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
           body,
           req.userId
         );
+
+        await recordAuditEvent(client, { entityType: 'loan_application', entityId: applicationId, eventType: 'loan_application_updated', actorUserId: req.userId,
+          previousValues: { loanAmount: existing.rows[0].loan_amount, emiAmount: existing.rows[0].emi_amount, interestRate: existing.rows[0].interest_rate, tenure: existing.rows[0].tenure, repaymentFrequency: existing.rows[0].repayment_frequency, remarks: existing.rows[0].remarks, fieldOfficerId: existing.rows[0].field_officer_id },
+          newValues: { loanAmount: Number(value(body, 'loanAmount', 'loan_amount')), emiAmount: terms.emiAmount, interestRate: terms.interestRate, tenure: Number(value(body, 'tenure')) || terms.defaultTenure, repaymentFrequency: terms.repaymentFrequency, remarks: value(body, 'remarks') || null, fieldOfficerId: refs.officerId }, correlationId: requestCorrelationId(req) });
   
         // Reload complete application details
         const data = await loadDetail(
@@ -1314,7 +1576,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.put(
     '/:id/status',
     authenticateRequest,
-    permission('write'),
+    permission((req) => ({ submitted: 'application.submit', under_review: 'application.review', approved: 'application.decision.record', rejected: 'application.decision.record' })[String(req.body?.status || '').trim().toLowerCase()] || 'application.status.invalid'),
+    requireApplicationScope,
     async (req, res) => {
       const client = await pool.connect();
   
@@ -1349,7 +1612,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
               application_status,
               loan_amount,
               sanction_amount,
-              sanction_status
+              sanction_status,
+              product_terms_snapshot
             FROM loan_applications
             WHERE id = $1
             FOR UPDATE
@@ -1398,6 +1662,31 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
         // APPROVAL
         // ===================================================
         if (requestedStatus === 'approved') {
+          let contractualValidation;
+          try {
+            contractualValidation = validateProductContractualTerms(
+              application.product_terms_snapshot || {},
+            );
+          } catch (error) {
+            await client.query('ROLLBACK');
+            return errorMessage(
+              res,
+              409,
+              error instanceof Error
+                ? error.message
+                : 'The application has invalid contractual repayment terms',
+            );
+          }
+
+          if (!contractualValidation.complete) {
+            await client.query('ROLLBACK');
+            return errorMessage(
+              res,
+              409,
+              `The application is missing contractual repayment terms: ${contractualValidation.missing.join(', ')}`,
+            );
+          }
+
           const sanctionAmountRaw =
             req.body?.sanctionAmount;
   
@@ -1704,6 +1993,9 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
           );
         }
   
+        await recordAuditEvent(client, { entityType: 'loan_application', entityId: applicationId, eventType: 'loan_application_status_changed', actorUserId: req.userId, previousStatus: currentStatus, newStatus: requestedStatus,
+          remarks: req.body?.sanctionRemarks || req.body?.rejectionRemarks || req.body?.rejectionReason || null,
+          newValues: requestedStatus === 'approved' ? { sanctionAmount: req.body?.sanctionAmount, sanctionDate: req.body?.sanctionDate } : null, correlationId: requestCorrelationId(req) });
         const data = await loadDetail(
           client,
           applicationId,
@@ -1739,7 +2031,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.put(
     '/:id/loan-terms',
     authenticateRequest,
-    permission('write'),
+    permission('application.terms.confirm'),
+    requireApplicationScope,
     async (req, res) => {
       const applicationId = req.params.id;
       if (!UUID.test(applicationId)) return errorMessage(res, 400, 'Invalid application id');
@@ -1767,7 +2060,7 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
         await client.query('BEGIN');
         transactionStarted = true;
         const applicationResult = await client.query(
-          `SELECT id, application_status, sanction_status
+          `SELECT id, application_status, sanction_status, interest_rate, tenure, repayment_frequency, emi_amount
            FROM loan_applications WHERE id = $1 FOR UPDATE`,
           [applicationId],
         );
@@ -1795,6 +2088,9 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
            WHERE id = $6`,
           [parsedRate, parsedTenure, frequency, parsedEmi, req.userId, applicationId],
         );
+        await recordAuditEvent(client, { entityType: 'loan_application', entityId: applicationId, eventType: 'loan_terms_updated', actorUserId: req.userId,
+          previousValues: { interestRate: application.interest_rate, tenure: application.tenure, repaymentFrequency: application.repayment_frequency, emiAmount: application.emi_amount },
+          newValues: { interestRate: parsedRate, tenure: parsedTenure, repaymentFrequency: frequency, emiAmount: parsedEmi }, correlationId: requestCorrelationId(req) });
         const data = await loadDetail(client, applicationId);
         await client.query('COMMIT'); transactionStarted = false;
         return res.json({ data, error: null });
@@ -1812,7 +2108,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.post(
     '/:id/create-loan',
     authenticateRequest,
-    permission('write'),
+    permission('application.account.create'),
+    requireApplicationScope,
     async (req, res) => {
       const applicationId = req.params.id;
 
@@ -1846,6 +2143,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
               tenure,
               repayment_frequency,
               emi_amount
+              , product_terms_snapshot
+              , contractual_first_installment_date
             FROM loan_applications
             WHERE id = $1
             FOR UPDATE
@@ -1874,6 +2173,31 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
             res,
             409,
             'Only approved and sanctioned applications can create a loan account',
+          );
+        }
+
+        let contractualValidation;
+        try {
+          contractualValidation = validateProductContractualTerms(
+            application.product_terms_snapshot || {},
+          );
+        } catch (error) {
+          await client.query('ROLLBACK');
+          return errorMessage(
+            res,
+            409,
+            error instanceof Error
+              ? error.message
+              : 'The approved application has invalid contractual repayment terms',
+          );
+        }
+
+        if (!contractualValidation.complete) {
+          await client.query('ROLLBACK');
+          return errorMessage(
+            res,
+            409,
+            `The approved application is missing contractual repayment terms: ${contractualValidation.missing.join(', ')}`,
           );
         }
 
@@ -1947,13 +2271,16 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
               remarks,
               created_by,
               updated_by
+              , contractual_repayment_terms
+              , contractual_terms_captured_at
+              , contractual_terms_captured_by
             )
             VALUES (
               $1, $2, $3, $4, $5, $6,
               $7, $7, $8, $9, $10, $11, $12,
               'pending_disbursement',
               'not_disbursed',
-              $13, $14, $14
+              $13, $14, $14, $15, NOW(), $14
             )
             RETURNING *
           `,
@@ -1972,9 +2299,12 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
             emiAmount,
             application.sanction_remarks || null,
             req.userId,
+            JSON.stringify({ ...(application.product_terms_snapshot || {}), contractualFirstInstallmentDate: application.contractual_first_installment_date || null }),
           ],
         );
 
+        await recordAuditEvent(client, { entityType: 'loan_application', entityId: applicationId, eventType: 'loan_account_created', actorUserId: req.userId,
+          newValues: { loanAccountId: loanResult.rows[0].id, sanctionAmount: application.sanction_amount }, correlationId: requestCorrelationId(req) });
         await client.query('COMMIT');
 
         return res.status(201).json({
@@ -2015,7 +2345,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.put(
     '/:id/documents/:documentId/verification',
     authenticateRequest,
-    permission('write'),
+    permission('application.documents.verify'),
+    requireApplicationScope,
     async (req, res) => {
       const applicationId = req.params.id;
       const documentId = req.params.documentId;
@@ -2161,6 +2492,9 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
             applicationId,
           ]
         );
+        await recordAuditEvent(client, { entityType: 'loan_application', entityId: applicationId, eventType: 'document_verification_changed', actorUserId: req.userId,
+          previousStatus: documentResult.rows[0].verification_status, newStatus: status, remarks: status === 'rejected' ? reason : null,
+          metadata: { documentId, applicationDocumentStatus }, correlationId: requestCorrelationId(req) });
   
         const data = await loadDetail(
           client,
@@ -2194,7 +2528,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.get(
     '/:id/field-verifications',
     authenticateRequest,
-    permission('read'),
+    permission('application.view'),
+    requireApplicationScope,
     async (req, res) => {
       const applicationId = req.params.id;
   
@@ -2252,7 +2587,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.post(
     '/:id/field-verifications',
     authenticateRequest,
-    permission('write'),
+    permission('application.field_verification.record'),
+    requireApplicationScope,
     async (req, res) => {
       const applicationId = req.params.id;
   
@@ -2451,7 +2787,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.get(
     '/:id/assessments',
     authenticateRequest,
-    permission('read'),
+    permission('application.credit_review.view'),
+    requireApplicationScope,
     async (req, res) => {
       const applicationId = req.params.id;
   
@@ -2511,7 +2848,8 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
   router.post(
     '/:id/assessments',
     authenticateRequest,
-    permission('write'),
+    permission('application.credit_review.record'),
+    requireApplicationScope,
     async (req, res) => {
       const applicationId = req.params.id;
   
@@ -2788,7 +3126,7 @@ export function createLoanApplicationsRoutes({ pool, authenticateRequest }) {
       }
     },
   );
-  router.delete('/:id', authenticateRequest, permission('delete'), async (req, res) => {
+  router.delete('/:id', authenticateRequest, permission('application.draft.delete'), requireApplicationScope, async (req, res) => {
     try { const result = await pool.query("DELETE FROM loan_applications WHERE id=$1 AND application_status='draft'", [req.params.id]); if (!result.rowCount) return errorMessage(res, 409, 'Only draft applications can be deleted'); return res.json({ data: null, error: null }); } catch (e) { console.error(e); return errorMessage(res, 500, 'Failed to delete loan application'); }
   });
   return router;

@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import { requireMasterPermission } from '../middleware/authorization.js';
 import { masterAuditJoin, masterAuditSelect, masterError } from '../utils/masterResponses.js';
 
 export function createDistrictsRoutes({ pool, authenticateRequest, unsupportedCsvUpload, mapDistrictRow }) {
   const router = Router();
+  router.use(authenticateRequest, requireMasterPermission('districts'));
 
   router.get('', authenticateRequest, async (_req, res) => {
     try {

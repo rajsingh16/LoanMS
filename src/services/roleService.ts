@@ -1,7 +1,30 @@
 import { apiFetch } from '../lib/api';
 import { Role } from '../types/roles';
 
+export interface PermissionCatalogItem { module: string; permission: string; description: string; }
+
 class RoleService {
+  async getPermissionCatalog(): Promise<PermissionCatalogItem[]> {
+    const res = await apiFetch('/api/roles/permissions/catalog');
+    const { data, error } = await res.json();
+    if (!res.ok || error) throw new Error(error?.message || 'Failed to fetch permission catalog');
+    return data || [];
+  }
+
+  async getRolePermissions(roleId: string): Promise<PermissionCatalogItem[]> {
+    const res = await apiFetch(`/api/roles/${encodeURIComponent(roleId)}/permissions`);
+    const { data, error } = await res.json();
+    if (!res.ok || error) throw new Error(error?.message || 'Failed to fetch role permissions');
+    return data || [];
+  }
+
+  async updateRolePermissions(roleId: string, permissions: Pick<PermissionCatalogItem, 'module' | 'permission'>[]): Promise<void> {
+    const res = await apiFetch(`/api/roles/${encodeURIComponent(roleId)}/permissions`, {
+      method: 'PUT', body: JSON.stringify({ permissions }),
+    });
+    const { error } = await res.json();
+    if (!res.ok || error) throw new Error(error?.message || 'Failed to update role permissions');
+  }
   async getAllRoles(): Promise<Role[]> {
     try {
       const res = await apiFetch('/api/roles');

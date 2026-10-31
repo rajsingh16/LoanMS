@@ -6,6 +6,13 @@ export interface LoanProduct {
   productName: string;
   interestRate: number;
   tenureInMonths: number;
+  minLoanAmount?: number;
+  maxLoanAmount?: number;
+  minTenure?: number;
+  maxTenure?: number;
+  defaultTenure?: number;
+  interestCalculationMethod?: string;
+  repaymentFrequency?: string;
   lpfCalcType: string;
   lpfValue: number;
   lpfDeductType: string;
@@ -50,6 +57,19 @@ export interface LoanProduct {
   emiStartSequence: number;
   emiEndSequence: number;
   emiAmount: number;
+  // Phase 8: explicit contractual defaults. They remain optional for legacy
+  // products; schedule eligibility rejects an account whose snapshot lacks them.
+  trancheTreatment?: 'sanctioned_amount' | 'disbursed_to_date';
+  subsequentDisbursementTreatment?: 'prohibit_after_schedule' | 'require_authorized_reschedule';
+  businessDayConvention?: 'none' | 'next_business_day';
+  firstInstallmentRule?: 'one_period_after_first_completed_disbursement';
+  feesTreatment?: 'scheduled' | 'excluded';
+  penaltyTreatment?: 'assessed_separately' | 'excluded';
+  businessCalendar?: string;
+  firstInstallmentOverrideAllowed?: boolean;
+  roundingPolicy?: 'half_up_2dp' | 'half_even_2dp';
+  interestRateBasis?: 'annual_nominal';
+  feeAllocationOrder?: 'fees_interest_principal';
   insertedOn: string;
   insertedBy: string;
   updatedOn?: string;

@@ -95,7 +95,18 @@ export function createUsersRoutes({ pool, authenticateRequest, requireAdministra
   });
 
   router.get('/:id/permissions', authenticateRequest, requireSelfOrAdministrator, async (req, res) => {
-    try { const { rows } = await pool.query('SELECT id, user_id, module, permission, granted_by, granted_at FROM user_permissions WHERE user_id = $1', [req.params.id]); return res.status(200).json({ data: rows, error: null }); }
+    try {
+      const { rows } = await pool.query(
+        `SELECT module, permission FROM user_permissions WHERE user_id = $1
+         UNION
+         SELECT rp.module, rp.permission FROM user_profiles up
+         JOIN roles r ON r.role_code = up.role AND r.is_active = true
+         JOIN role_permissions rp ON rp.role_id = r.id
+         WHERE up.id = $1
+         ORDER BY module, permission`, [req.params.id],
+      );
+      return res.status(200).json({ data: rows, error: null });
+    }
     catch (error) { console.error(error); return errorResponse(res, 500, 'Failed to load permissions'); }
   });
 

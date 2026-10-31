@@ -16,6 +16,7 @@ import {
   FileText
 } from 'lucide-react';
 import { Pagination } from '../../../components/Common/Pagination';
+import { apiFetch } from '../../../lib/api';
 
 interface RepaymentDetailRecord {
   id: string;
@@ -115,6 +116,9 @@ interface CenterDemandFilterOptions {
   assignedTo: string;
   showMature: boolean;
 }
+
+const missingRepayment = new Proxy({}, { get: () => '—' }) as RepaymentDetailRecord;
+const missingDemand = new Proxy({}, { get: () => '—' }) as CenterDemandRecord;
 
 const RepaymentDetailFilterDropdown: React.FC<{
   onFilter: (filters: RepaymentDetailFilterOptions) => void;
@@ -473,8 +477,27 @@ export const RepaymentDetails: React.FC = () => {
   const [demandTotalItems, setDemandTotalItems] = useState(0);
   const [demandTotalPages, setDemandTotalPages] = useState(0);
 
-  // Generate sample data
+  // Keep the original report UI, but source both tabs from the repayment ledger.
   useEffect(() => {
+    let cancelled = false;
+    const mapRepayment = (row: Record<string, unknown>) => Object.assign(Object.create(missingRepayment), {
+      id: String(row.id), loanId: String(row.loan_id), loanCode: String(row.loan_account_number), branchName: String(row.branch_name || '—'),
+      centerCode: String(row.center_code || '—'), centerName: String(row.center_name || '—'), foId: String(row.employee_id || '—'), foName: String(row.fo_name || '—'),
+      clientId: String(row.client_code || '—'), clientName: String(row.client_name || '—'), mobileNumber: String(row.mobile_number || '—'), productCode: String(row.product_code || '—'),
+      principalAmount: Number(row.loan_amount || 0), interestAmount: Number(row.total_interest || row.scheduled_interest || 0), principalOutstanding: Number(row.principal_outstanding || 0), interestOutstanding: Number(row.interest_outstanding || 0), totalOutstanding: Number(row.outstanding_amount || 0),
+      totalInstallments: Number(row.installment_count || 0), installmentsOutstanding: Number(row.installments_outstanding || 0), emiSequence: Number(row.installment_number || 0),
+      ddPrincipalDue: Number(row.scheduled_principal || 0), ddInterestDue: Number(row.scheduled_interest || 0), ddTotalAmountDue: Number(row.scheduled_amount || 0), ddPrincipalCollected: Number(row.principal_paid || 0), ddInterestCollected: Number(row.interest_paid || 0), ddTotalAmountCollected: Number(row.paid_amount || 0), ddPrincipalOutstanding: Number(row.principal_due_outstanding || 0),
+      collectionDate: String(row.last_collection_date || ''), meetingDate: String(row.contractual_due_date || ''), loanStatus: String(row.loan_status || '—'), insertedOn: String(row.created_at || ''), loanCycle: Number(row.cycle || 0),
+    }) as RepaymentDetailRecord;
+    const load = async () => {
+      try {
+        const response = await apiFetch('/api/repayments/reports/repayment-details?limit=1000'); const body = await response.json();
+        if (!response.ok) throw new Error(body?.error?.message || 'Unable to load repayment details');
+        const rows = (body.data || []).map(mapRepayment); if (!cancelled) { setRepaymentRecords(rows); setFilteredRepaymentRecords(rows); setRepaymentTotalItems(rows.length); setRepaymentTotalPages(Math.ceil(rows.length / repaymentPageSize)); setCenterDemandRecords([]); setFilteredCenterDemandRecords([]); setLoading(false); }
+      } catch (cause) { if (!cancelled) { setError(cause instanceof Error ? cause.message : 'Unable to load repayment details'); setLoading(false); } }
+    };
+    load(); return () => { cancelled = true; };
+    /*
     const generateSampleData = () => {
       // Generate repayment records
       const repaymentData: RepaymentDetailRecord[] = [];
@@ -579,6 +602,7 @@ export const RepaymentDetails: React.FC = () => {
     };
     
     generateSampleData();
+    */
   }, []);
 
   const handleRepaymentFilter = (filters: RepaymentDetailFilterOptions) => {

@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import { requireMasterPermission } from '../middleware/authorization.js';
 
 export function createAreasRoutes({ pool, authenticateRequest, syncBranchFromArea }) {
   const router = Router();
+  router.use(authenticateRequest, requireMasterPermission('areas'));
 
   // --- Areas ---
   router.get('/', authenticateRequest, async (_req, res) => {

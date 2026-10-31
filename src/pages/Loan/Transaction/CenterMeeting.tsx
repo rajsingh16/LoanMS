@@ -1,11 +1,11 @@
 // ─── CenterMeetingPage.tsx ─────────────────────────────────────────────────
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { DataTable } from '../../../components/Common/DataTable';
 import { PermissionGuard } from '../../../components/Common/PermissionGuard';
-import { centerMeetingService, CenterMeetingRecord, CenterMeetingFilterOptions } from '../../../services/transactionService/centerMeetingService';
+import { centerMeetingService, CenterMeetingRecord, CenterMeetingFilterOptions, MeetingInput, MeetingOptions } from '../../../services/transactionService/centerMeetingService';
 import {
   Search, Download, Calendar, Clock, CheckCircle, XCircle,
-  Filter, ChevronDown, Building, User, Edit, Trash2, AlertCircle,
+  Filter, ChevronDown, User, Edit, Trash2, AlertCircle,
 } from 'lucide-react';
 
 const FilterDropdown: React.FC<{ onFilter: (f: CenterMeetingFilterOptions) => void }> = ({ onFilter }) => {
@@ -57,38 +57,49 @@ export const CenterMeetingPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [activeFilters, setActiveFilters] = useState<CenterMeetingFilterOptions>({ branch: '', meetingStatus: '', scheduleDateFrom: '', scheduleDateTo: '' });
+  const [options, setOptions] = useState<MeetingOptions>({ branches: [], centers: [], fieldOfficers: [] });
+  const [editing, setEditing] = useState<CenterMeetingRecord | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const requestId = useRef(0);
 
-  useEffect(() => { loadRecords(); }, []);
+  useEffect(() => { loadRecords(); centerMeetingService.getOptions().then(setOptions).catch(e => setError(e.message)); }, []);
 
   const loadRecords = async () => {
+    const request = ++requestId.current;
     try {
-      setLoading(true);
+      setLoading(true); setError('');
       const data = await centerMeetingService.getAllMeetings();
-      setRecords(data); setFilteredRecords(data);
-    } catch { setError('Failed to load center meetings'); }
-    finally { setLoading(false); }
+      if (request !== requestId.current) return;
+      setRecords(data); applyFilters(data, activeFilters);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Failed to load center meetings'); }
+    finally { if (request === requestId.current) setLoading(false); }
   };
 
-  const handleFilter = (filters: CenterMeetingFilterOptions) => {
-    let f = records;
-    if (filters.branch) f = f.filter(r => r.centerName.toLowerCase().includes(filters.branch.toLowerCase()));
+  const applyFilters = (source: CenterMeetingRecord[], filters: CenterMeetingFilterOptions) => {
+    let f = source;
+    if (filters.branch) f = f.filter(r => (r.branchName || '').toLowerCase().includes(filters.branch.toLowerCase()));
     if (filters.center) f = f.filter(r => r.centerName.toLowerCase().includes(filters.center!.toLowerCase()) || r.centerId.toLowerCase().includes(filters.center!.toLowerCase()));
     if (filters.meeting) f = f.filter(r => r.meetingId.toLowerCase().includes(filters.meeting!.toLowerCase()));
     if (filters.meetingType) f = f.filter(r => r.meetingType === filters.meetingType);
     if (filters.meetingStatus) f = f.filter(r => r.meetingStatus === filters.meetingStatus);
-    if (filters.scheduleDateFrom && filters.scheduleDateTo) f = f.filter(r => r.scheduleDate >= filters.scheduleDateFrom && r.scheduleDate <= filters.scheduleDateTo);
+    if (filters.scheduleDateFrom) f = f.filter(r => r.scheduleDate >= filters.scheduleDateFrom);
+    if (filters.scheduleDateTo) f = f.filter(r => r.scheduleDate <= filters.scheduleDateTo);
     if (filters.assignedTo) f = f.filter(r => r.assignedTo.toLowerCase().includes(filters.assignedTo!.toLowerCase()));
     setFilteredRecords(f);
   };
+  const handleFilter = (filters: CenterMeetingFilterOptions) => { setActiveFilters(filters); applyFilters(records, filters); };
 
   const handleDelete = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this meeting?')) return;
     try {
       await centerMeetingService.deleteMeeting(id);
-      setRecords(prev => prev.filter(r => r.id !== id)); setFilteredRecords(prev => prev.filter(r => r.id !== id));
-      setSuccess('Meeting deleted successfully!'); setTimeout(() => setSuccess(''), 3000);
-    } catch { setError('Failed to delete meeting'); }
+      await loadRecords(); setSuccess('Meeting cancelled successfully!'); setTimeout(() => setSuccess(''), 3000);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Failed to delete meeting'); }
   };
+  const emptyForm = (): MeetingInput => ({ branchId: '', centerUuid: '', fieldOfficerId: '', meetingType: 'Regular', scheduleDate: '', scheduleTime: '', meetingEndDate: '', meetingEndTime: '', meetingLocation: '', agenda: '', remarks: '' });
+  const initialForm = editing ? { branchId: editing.branchId || '', centerUuid: editing.centerUuid || '', fieldOfficerId: editing.fieldOfficerId || '', meetingType: editing.meetingType, scheduleDate: editing.scheduleDate, scheduleTime: editing.scheduleTime, meetingEndDate: editing.meetingEndDate, meetingEndTime: editing.meetingEndTime || '', meetingLocation: editing.meetingLocation || '', agenda: editing.agenda || '', remarks: editing.remarks || '' } : emptyForm();
+  const MeetingForm: React.FC = () => { const [form, setForm] = useState<MeetingInput>(initialForm); const set = (key: keyof MeetingInput, value: string) => setForm(p => ({ ...p, [key]: value })); const submit = async (e: React.FormEvent) => { e.preventDefault(); try { setError(''); editing ? await centerMeetingService.updateMeeting(editing.id, form) : await centerMeetingService.createMeeting(form); setShowForm(false); setEditing(null); await loadRecords(); setSuccess(`Meeting ${editing ? 'updated' : 'created'} successfully!`); setTimeout(() => setSuccess(''), 3000); } catch (err) { setError(err instanceof Error ? err.message : 'Unable to save meeting'); } }; const centers = options.centers.filter(x => !form.branchId || x.branch_id === form.branchId); const officers = options.fieldOfficers.filter(x => !form.branchId || x.branch_id === form.branchId); return <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"><form onSubmit={submit} className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto space-y-4"><h2 className="text-xl font-semibold dark:text-white">{editing ? 'Edit Center Meeting' : 'Add Center Meeting'}</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-4">{[["Branch",'branchId',options.branches.map(x=>[x.id,x.branch_name])],["Center",'centerUuid',centers.map(x=>[x.id,x.center_name])],["Assigned Field Officer",'fieldOfficerId',officers.map(x=>[x.id,`${x.first_name} ${x.last_name}`])],["Meeting Type",'meetingType',['Regular','Special','CGT','GRT'].map(x=>[x,x])]].map(([label,key,items])=><label key={String(key)} className="text-sm dark:text-gray-200">{String(label)}<select required value={String(form[key as keyof MeetingInput] || '')} onChange={e=>set(key as keyof MeetingInput,e.target.value)} className="mt-1 w-full px-3 py-2 border rounded-lg dark:bg-gray-700"><option value="">Select {label}</option>{(items as string[][]).map(x=><option key={x[0]} value={x[0]}>{x[1]}</option>)}</select></label>)}{[['Schedule Date','scheduleDate','date'],['Schedule Time','scheduleTime','time'],['Meeting End Date','meetingEndDate','date'],['Meeting End Time','meetingEndTime','time']].map(([label,key,type])=><label key={key} className="text-sm dark:text-gray-200">{label}<input required type={type} value={String(form[key as keyof MeetingInput] || '')} onChange={e=>set(key as keyof MeetingInput,e.target.value)} className="mt-1 w-full px-3 py-2 border rounded-lg dark:bg-gray-700" /></label>)}</div>{[['Meeting Location','meetingLocation'],['Agenda','agenda'],['Remarks','remarks']].map(([label,key])=><label key={key} className="block text-sm dark:text-gray-200">{label}<textarea value={String(form[key as keyof MeetingInput] || '')} onChange={e=>set(key as keyof MeetingInput,e.target.value)} className="mt-1 w-full px-3 py-2 border rounded-lg dark:bg-gray-700" /></label>)}<div className="flex justify-end gap-3"><button type="button" onClick={()=>{setShowForm(false);setEditing(null);}} className="px-4 py-2 border rounded-lg dark:text-white">Cancel</button><button className="px-4 py-2 bg-blue-600 text-white rounded-lg">Save Meeting</button></div></form></div>; };
 
   const handleDownload = async () => {
     try { await centerMeetingService.exportCSV(filteredRecords); setSuccess('CSV exported!'); setTimeout(() => setSuccess(''), 3000); }
@@ -99,7 +110,7 @@ export const CenterMeetingPage: React.FC = () => {
   const getStatusColor = (status: string) => { switch (status) { case 'completed': return 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300'; case 'cancelled': return 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300'; default: return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300'; } };
 
   const columns = [
-    { key: 'actions', label: 'Action', render: (_: unknown, row: CenterMeetingRecord) => (<div className="flex items-center space-x-2"><PermissionGuard module="loan" permission="write"><button onClick={() => console.log('Edit', row.id)} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"><Edit className="w-4 h-4" /></button></PermissionGuard><PermissionGuard module="loan" permission="delete"><button onClick={() => handleDelete(row.id)} className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"><Trash2 className="w-4 h-4" /></button></PermissionGuard></div>) },
+    { key: 'actions', label: 'Action', render: (_: unknown, row: CenterMeetingRecord) => (<div className="flex items-center space-x-2"><PermissionGuard module="loan" permission="write"><button onClick={() => { setEditing(row); setShowForm(true); }} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"><Edit className="w-4 h-4" /></button></PermissionGuard><PermissionGuard module="loan" permission="delete"><button onClick={() => handleDelete(row.id)} className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"><Trash2 className="w-4 h-4" /></button></PermissionGuard></div>) },
     { key: 'meetingId', label: 'Meeting Id', sortable: true, render: (v: string) => <span className="font-mono font-medium">{v}</span> },
     { key: 'displaySequence', label: 'Display Sequence', sortable: true },
     { key: 'assignedTo', label: 'Assigned To', sortable: true, render: (v: string) => <div className="flex items-center space-x-2"><User className="w-4 h-4 text-gray-400" /><span>{v}</span></div> },
@@ -128,8 +139,9 @@ export const CenterMeetingPage: React.FC = () => {
           </div>
         ))}
       </div>
-      <DataTable columns={columns} data={filteredRecords} title="Center Meetings" loading={loading}
+      <DataTable columns={columns} data={filteredRecords} title="Center Meetings" loading={loading} exportable={false} onAdd={() => { setEditing(null); setShowForm(true); }}
         filterComponent={<div className="flex items-center space-x-3"><FilterDropdown onFilter={handleFilter} /><PermissionGuard module="loan" permission="read"><button onClick={handleDownload} className="flex items-center space-x-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:text-white"><Download className="w-4 h-4" /><span>Download</span></button></PermissionGuard></div>} />
+      {showForm && <MeetingForm />}
     </div>
   );
 };

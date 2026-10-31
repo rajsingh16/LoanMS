@@ -18,6 +18,20 @@ export const productService = {
     return json.data ?? json;
   },
 
+  getProductsByGroup: async (groupId: string): Promise<LoanProduct[]> => {
+    const res = await apiFetch(`${BASE_URL}/by-group/${encodeURIComponent(groupId)}`);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error?.message || 'Failed to load products');
+    return json.data ?? json;
+  },
+
+  getProductConfiguration: async (id: string): Promise<LoanProduct> => {
+    const res = await apiFetch(`${BASE_URL}/${encodeURIComponent(id)}/configuration`);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error?.message || 'Failed to load product configuration');
+    return json.data ?? json;
+  },
+
   createProduct: async (formData: ProductFormData): Promise<LoanProduct> => {
     const res = await apiFetch(BASE_URL, {
       method: 'POST',

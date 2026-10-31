@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Modal } from '../../../components/Common/Modal';
 import { CenterFilterDropdown } from '../../../components/Common/CenterFilterDropdown';
 import { CenterForm } from '../../../components/Forms/CenterForm';
@@ -26,10 +27,11 @@ import {
 } from 'lucide-react';
 
 export const Centers: React.FC = () => {
+  const location = useLocation();
   const [centers, setCenters] = useState<Center[]>([]);
   const [filteredCenters, setFilteredCenters] = useState<Center[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(Boolean((location.state as { openCreate?: boolean } | null)?.openCreate));
   const [showCSVModal, setShowCSVModal] = useState(false);
   const [editingCenter, setEditingCenter] = useState<Center | null>(null);
   const [error, setError] = useState<string>('');

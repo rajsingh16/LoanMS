@@ -52,6 +52,17 @@ interface ProductFormData {
   emiEndSequence: number;
   emiAmount: number;
   status?: string;
+  trancheTreatment?: string;
+  subsequentDisbursementTreatment?: string;
+  businessDayConvention?: string;
+  businessCalendar?: string;
+  firstInstallmentRule?: string;
+  firstInstallmentOverrideAllowed?: boolean;
+  roundingPolicy?: string;
+  interestRateBasis?: string;
+  feeAllocationOrder?: string;
+  feesTreatment?: string;
+  penaltyTreatment?: string;
 }
 
 interface ProductGroupOption {
@@ -124,6 +135,17 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     emiStartSequence: initialData.emiStartSequence || 1,
     emiEndSequence: initialData.emiEndSequence || 12,
     emiAmount: initialData.emiAmount || 0,
+    trancheTreatment: initialData.trancheTreatment || undefined,
+    subsequentDisbursementTreatment: initialData.subsequentDisbursementTreatment || undefined,
+    businessDayConvention: initialData.businessDayConvention || undefined,
+    firstInstallmentRule: initialData.firstInstallmentRule || undefined,
+    businessCalendar: initialData.businessCalendar || '',
+    firstInstallmentOverrideAllowed: initialData.firstInstallmentOverrideAllowed,
+    roundingPolicy: initialData.roundingPolicy || undefined,
+    interestRateBasis: initialData.interestRateBasis || undefined,
+    feeAllocationOrder: initialData.feeAllocationOrder || undefined,
+    feesTreatment: initialData.feesTreatment || undefined,
+    penaltyTreatment: initialData.penaltyTreatment || undefined,
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof ProductFormData, string>>>({});
@@ -830,6 +852,61 @@ export const ProductForm: React.FC<ProductFormProps> = ({
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
               placeholder="Enter EIR interest rate"
             />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2 pb-2 border-b border-gray-200 dark:border-gray-700">Contractual Repayment Terms</h4>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">These terms are copied into each new application and loan account. Leave them unconfigured only for legacy products; those accounts cannot generate a repayment schedule.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[
+            ['trancheTreatment', 'Tranche Treatment', [['sanctioned_amount', 'Sanctioned amount'], ['disbursed_to_date', 'Disbursed to date']]],
+            ['subsequentDisbursementTreatment', 'Later Disbursements', [['prohibit_after_schedule', 'Prohibit after schedule'], ['require_authorized_reschedule', 'Require authorized reschedule']]],
+            ['businessDayConvention', 'Business-day Convention', [['none', 'Keep contractual date'], ['next_business_day', 'Next business day collection']]],
+            ['firstInstallmentRule', 'First Installment Rule', [['one_period_after_first_completed_disbursement', 'One period after first completed disbursement']]],
+            ['feesTreatment', 'Fees Treatment', [['scheduled', 'Scheduled'], ['excluded', 'Excluded from schedule']]],
+            ['penaltyTreatment', 'Penalty Treatment', [['assessed_separately', 'Assessed separately'], ['excluded', 'Excluded from installments']]],
+          ].map(([key, label, options]) => (
+            <div key={key as string}>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+              <select value={String(formData[key as keyof ProductFormData] || '')} onChange={(e) => handleChange(key as keyof ProductFormData, e.target.value as never)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white">
+                <option value="">Not configured</option>
+                {(options as string[][]).map(([value, optionLabel]) => <option key={value} value={value}>{optionLabel}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Rounding policy</label>
+            <select value={formData.roundingPolicy || ''} onChange={(e) => handleChange('roundingPolicy', e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white">
+              <option value="">Not configured</option><option value="half_up_2dp">Half-up to two decimal places</option><option value="half_even_2dp">Banker’s rounding to two decimal places</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Interest-rate basis</label>
+            <select value={formData.interestRateBasis || ''} onChange={(e) => handleChange('interestRateBasis', e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white">
+              <option value="">Not configured</option><option value="annual_nominal">Annual nominal rate</option>
+            </select>
+            <p className="text-xs text-gray-500 mt-1">Required to interpret the configured interest rate in the contractual snapshot.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">First-installment override</label>
+            <select value={formData.firstInstallmentOverrideAllowed === undefined ? '' : String(formData.firstInstallmentOverrideAllowed)} onChange={(e) => handleChange('firstInstallmentOverrideAllowed', e.target.value === '' ? '' : e.target.value === 'true')} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white">
+              <option value="">Not configured</option><option value="true">An authorised override is permitted</option><option value="false">Use the contractual rule only</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Business/holiday calendar</label>
+            <input value={formData.businessCalendar || ''} onChange={(e) => handleChange('businessCalendar', e.target.value)} disabled={formData.businessDayConvention !== 'next_business_day'} placeholder={formData.businessDayConvention === 'next_business_day' ? 'Maintained calendar identifier' : 'Not used when contractual dates are retained'} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white disabled:opacity-60" />
+            <p className="text-xs text-gray-500 mt-1">Required only when collections move to the next business day; it must identify an approved maintained calendar.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Fee allocation order</label>
+            <select value={formData.feeAllocationOrder || ''} onChange={(e) => handleChange('feeAllocationOrder', e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white">
+              <option value="">Not configured</option><option value="fees_interest_principal">Fees, then interest, then principal</option>
+            </select>
           </div>
         </div>
       </div>

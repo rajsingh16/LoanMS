@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { recordAuditEvent, requestCorrelationId } from '../services/auditService.js';
 
 export function createRolesRoutes({ pool, authenticateRequest, requireAdministrator }) {
   const router = Router();
@@ -15,6 +16,62 @@ export function createRolesRoutes({ pool, authenticateRequest, requireAdministra
     if (body.description !== undefined && body.description !== null && typeof body.description !== 'string') return 'Description must be text';
     return null;
   };
+  const validPermissions = (items) => Array.isArray(items)
+    && items.every((item) => item && typeof item.module === 'string' && typeof item.permission === 'string');
+
+  router.get('/permissions/catalog', ...admin, async (_req, res) => {
+    try {
+      const { rows } = await pool.query('SELECT module, permission, description FROM permission_catalog ORDER BY module, permission');
+      return res.json({ data: rows, error: null });
+    } catch (error) { console.error(error); return roleError(res, 500, 'Failed to load permission catalog'); }
+  });
+
+  router.get('/:id/permissions', ...admin, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT rp.module, rp.permission, rp.granted_at, rp.granted_by, pc.description
+           FROM role_permissions rp JOIN permission_catalog pc ON pc.module = rp.module AND pc.permission = rp.permission
+          WHERE rp.role_id = $1 ORDER BY rp.module, rp.permission`, [req.params.id],
+      );
+      return res.json({ data: rows, error: null });
+    } catch (error) { console.error(error); return roleError(res, 500, 'Failed to load role permissions'); }
+  });
+
+  router.put('/:id/permissions', ...admin, async (req, res) => {
+    const requested = req.body?.permissions;
+    if (!validPermissions(requested)) return roleError(res, 400, 'permissions must be an array of module and permission objects');
+    const unique = [...new Map(requested.map((item) => [`${item.module}:${item.permission}`, { module: item.module, permission: item.permission }])).values()];
+    const client = await pool.connect();
+    let started = false;
+    try {
+      await client.query('BEGIN'); started = true;
+      const role = await client.query('SELECT id, role_code FROM roles WHERE id = $1 FOR UPDATE', [req.params.id]);
+      if (!role.rowCount) { await client.query('ROLLBACK'); return roleError(res, 404, 'Role not found'); }
+      const catalog = await client.query('SELECT module, permission FROM permission_catalog');
+      const known = new Set(catalog.rows.map((item) => `${item.module}:${item.permission}`));
+      if (unique.some((item) => !known.has(`${item.module}:${item.permission}`))) {
+        await client.query('ROLLBACK'); return roleError(res, 400, 'One or more permissions are not supported');
+      }
+      const before = await client.query('SELECT module, permission FROM role_permissions WHERE role_id = $1', [req.params.id]);
+      await client.query('DELETE FROM role_permissions WHERE role_id = $1', [req.params.id]);
+      for (const item of unique) await client.query(
+        'INSERT INTO role_permissions (role_id, module, permission, granted_by) VALUES ($1, $2, $3, $4)',
+        [req.params.id, item.module, item.permission, req.userId],
+      );
+      const previous = before.rows.map((item) => `${item.module}:${item.permission}`).sort();
+      const next = unique.map((item) => `${item.module}:${item.permission}`).sort();
+      await recordAuditEvent(client, {
+        entityType: 'role', entityId: req.params.id, eventType: 'role_permissions_updated', actorUserId: req.userId,
+        previousValues: { permissions: previous }, newValues: { permissions: next },
+        metadata: { roleCode: role.rows[0].role_code }, correlationId: requestCorrelationId(req),
+      });
+      await client.query('COMMIT'); started = false;
+      return res.json({ data: unique, error: null });
+    } catch (error) {
+      if (started) await client.query('ROLLBACK').catch(() => {});
+      console.error(error); return roleError(res, 500, 'Failed to update role permissions');
+    } finally { client.release(); }
+  });
 
   router.get('/', ...admin, async (_req, res) => {
     try {

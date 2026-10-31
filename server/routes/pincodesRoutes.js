@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import { requireMasterPermission } from '../middleware/authorization.js';
 
 export function createPincodesRoutes({ pool, authenticateRequest }) {
   const router = Router();
+  router.use(authenticateRequest, requireMasterPermission('pincodes'));
 
   function mapPincodeRow(row) {
     return {
